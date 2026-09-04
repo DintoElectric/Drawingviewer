@@ -1,0 +1,20 @@
+# Netlify build config. The site is static (in /public); the one dynamic piece is
+# the publish-revisions function used by the in-app upload page.
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Long-cache the PDFs (they're immutable — a new rev is a new filename), but keep
+# the manifest fresh so the index always reflects the latest publish.
+[[headers]]
+  for = "/drawings/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "no-cache"

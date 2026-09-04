@@ -1,0 +1,56 @@
+{
+  "project": {
+    "id": "riverbend-ph2",
+    "name": "Riverbend Medical Center — Phase 2",
+    "discipline": "Electrical",
+    "syncedAt": "2026-09-02T14:12:00Z"
+  },
+  "_note": "SAMPLE DATA. Replace these rows and the files in /public/drawings with your real sheets. The upload flow and the GitHub Action both rewrite this file for you — you normally never edit it by hand.",
+  "drawings": {
+    "E-101": {
+      "title": "Power Plan — Level 1",
+      "currentRev": 3,
+      "currentFile": "drawings/E-101_Rev3.pdf",
+      "issuedDate": "2026-08-12",
+      "status": "issued",
+      "history": [
+        { "rev": 1, "date": "2026-06-15", "reason": "Permit set", "file": "drawings/archive/E-101_Rev1.pdf" },
+        { "rev": 2, "date": "2026-07-28", "reason": "RFI-08 response", "file": "drawings/archive/E-101_Rev2.pdf" },
+        { "rev": 3, "date": "2026-08-12", "reason": "Revised for construction", "file": "drawings/E-101_Rev3.pdf" }
+      ]
+    },
+    "E-201": {
+      "title": "Lighting Plan — Level 1",
+      "currentRev": 2,
+      "currentFile": "drawings/E-201_Rev2.pdf",
+      "issuedDate": "2026-08-12",
+      "status": "issued",
+      "history": [
+        { "rev": 1, "date": "2026-07-28", "reason": "Permit set", "file": "drawings/archive/E-201_Rev1.pdf" },
+        { "rev": 2, "date": "2026-08-12", "reason": "Revised for construction", "file": "drawings/E-201_Rev2.pdf" }
+      ]
+    },
+    "E-301": {
+      "title": "One-Line Diagram",
+      "currentRev": 3,
+      "currentFile": "drawings/E-301_Rev3.pdf",
+      "issuedDate": "2026-08-12",
+      "status": "issued",
+      "history": [
+        { "rev": 1, "date": "2026-06-15", "reason": "Permit set", "file": "drawings/archive/E-301_Rev1.pdf" },
+        { "rev": 2, "date": "2026-07-28", "reason": "RFI-08 response", "file": "drawings/archive/E-301_Rev2.pdf" },
+        { "rev": 3, "date": "2026-08-12", "reason": "Revised for construction", "file": "drawings/E-301_Rev3.pdf" }
+      ]
+    },
+    "E-401": {
+      "title": "Panel Schedules — H1 through H6",
+      "currentRev": 1,
+      "currentFile": "drawings/E-401_Rev1.pdf",
+      "issuedDate": "2026-07-28",
+      "status": "issued",
+      "history": [
+        { "rev": 1, "date": "2026-07-28", "reason": "Issued for construction", "file": "drawings/E-401_Rev1.pdf" }
+      ]
+    }
+  }
+}

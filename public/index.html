@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drawings Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">D</div><span class="name">Drawings</span>
+    </div>
+    <div class="vrule"></div>
+    <button class="picker"><i class="ph ph-buildings" style="font-size:15px;color:var(--color-neutral-400)"></i><span id="projName">Project</span><i class="ph ph-caret-down" style="font-size:12px;color:var(--color-neutral-500)"></i></button>
+    <div class="spacer"></div>
+    <div class="syncpill"><i class="ph-fill ph-cloud-check" style="font-size:14px;color:var(--color-accent-400)"></i><span id="syncLabel">Synced</span></div>
+    <button class="btn btn-icon btn-secondary"><i class="ph ph-bell" style="font-size:16px"></i></button>
+    <div class="avatar">RM</div>
+  </div>
+
+  <div class="shell">
+    <aside class="rail">
+      <div>
+        <div class="group-label">Disciplines</div>
+        <div class="row sel"><i class="ph-fill ph-lightning" style="font-size:15px"></i>Electrical<span class="count" id="elecCount">0</span></div>
+        <div class="row"><i class="ph ph-fan" style="font-size:15px"></i>Mechanical<span class="count">—</span></div>
+        <div class="row"><i class="ph ph-drop" style="font-size:15px"></i>Plumbing<span class="count">—</span></div>
+        <div class="row"><i class="ph ph-blueprint" style="font-size:15px"></i>Architectural<span class="count">—</span></div>
+      </div>
+      <div>
+        <div class="group-label">On this tablet</div>
+        <div class="row"><i class="ph ph-push-pin" style="font-size:15px"></i>Pinned offline<span class="count">—</span></div>
+        <div class="row"><i class="ph ph-pencil-simple" style="font-size:15px"></i>My markups<span class="count">—</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <div class="search"><i class="ph ph-magnifying-glass"></i><input class="input" id="search" placeholder="Sheet number, title or keyword"></div>
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="behind">New revs<span class="badge" id="behindBadge">0</span></button>
+        <button class="chip" data-filter="pinned">Pinned</button>
+        <div class="spacer"></div>
+        <a class="btn btn-primary" href="./upload.html" style="min-height:40px"><i class="ph ph-upload-simple"></i>Add revisions</a>
+      </div>
+
+      <div id="banner"></div>
+
+      <div class="tablewrap">
+        <table class="table">
+          <thead><tr>
+            <th style="width:96px">Sheet</th><th>Title</th>
+            <th style="width:110px">Current rev</th><th style="width:118px">Issued</th>
+            <th style="width:186px">Status</th><th style="width:64px"></th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="./js/index-page.js"></script>
+</body>
+</html>

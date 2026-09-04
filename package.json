@@ -1,0 +1,13 @@
+{
+  "name": "dinto-drawings-hub",
+  "version": "1.0.0",
+  "description": "Drawing revision-control hub for Paul Dinto Electrical — uploads name and version sheets from their own title blocks.",
+  "type": "module",
+  "scripts": {
+    "ingest": "node scripts/ingest.mjs",
+    "serve": "npx --yes serve public"
+  },
+  "dependencies": {
+    "pdfjs-dist": "4.0.379"
+  }
+}

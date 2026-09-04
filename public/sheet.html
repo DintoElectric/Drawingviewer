@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sheet — Drawings Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div class="viewer-header">
+    <a class="btn btn-icon btn-secondary" href="./index.html" title="Back"><i class="ph ph-arrow-left" style="font-size:16px"></i></a>
+    <span class="snum" id="snum">—</span>
+    <span id="stitle" style="font:500 15px var(--font-heading)"></span>
+    <button class="revpick" id="revpick">Rev — <i class="ph ph-caret-down" style="font-size:12px"></i></button>
+    <div class="spacer"></div>
+    <a class="btn btn-secondary" id="downloadBtn" style="min-height:36px" download><i class="ph ph-download-simple"></i>Download</a>
+  </div>
+
+  <div class="shell" style="min-height:calc(100vh - 56px)">
+    <div class="canvas">
+      <iframe id="pdf" title="Sheet"></iframe>
+      <div class="empty hidden" id="empty"></div>
+    </div>
+    <aside class="history">
+      <div class="h-label">Revisions</div>
+      <div id="revs"></div>
+    </aside>
+  </div>
+
+  <script type="module" src="./js/sheet-page.js"></script>
+</body>
+</html>
