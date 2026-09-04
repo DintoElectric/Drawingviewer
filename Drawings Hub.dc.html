@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/nocturne-796fac06-2ae8-4eed-87f3-6aadf20d11de/styles.css">
+<script src="_ds/nocturne-796fac06-2ae8-4eed-87f3-6aadf20d11de/_ds_bundle.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<style>
+  body { margin: 0; background: #101220; }
+  a { color: var(--color-accent); text-decoration: none; }
+  a:hover { color: var(--color-accent-300); }
+  .scr { width: 1194px; height: 834px; background: var(--color-bg); color: var(--color-text); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 0 0 1px #3f424d, 0 24px 60px rgba(0,0,0,.6); }
+  .lbl { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; font: 500 13px/1.2 Inter, system-ui, sans-serif; color: var(--color-neutral-300); }
+  .lid { font: 600 10.5px ui-monospace, Menlo, monospace; padding: 3px 7px; background: var(--color-accent-800); color: var(--color-accent-100); border-radius: 5px; }
+  .lnote { font: 400 12px/1.3 Inter, system-ui, sans-serif; color: var(--color-neutral-600); }
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;gap:56px;padding:56px 64px 96px;font-family:Inter,system-ui,sans-serif;background:#101220;min-height:100vh">
+
+  <div style="max-width:760px;display:flex;flex-direction:column;gap:14px">
+    <div style="font:600 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--color-accent)">Dinto Electric &middot; internal tool concept</div>
+    <h1 style="margin:0;font:500 34px/1.15 Inter,system-ui,sans-serif;color:var(--color-text);letter-spacing:-.01em">Drawings hub &mdash; tablet mockups</h1>
+    <p style="margin:0;font:400 15px/1.6 Inter,system-ui,sans-serif;color:var(--color-neutral-400);text-wrap:pretty">Five screens for viewing electrical drawings in the field and keeping revisions straight. Built for a tablet in landscape (1194&times;834), one polished direction. Assumptions: sheets live under project &rarr; discipline &rarr; sheet number; a foreman only ever needs the current rev unless they ask to compare; a new upload is matched to the sheet it supersedes automatically, and a human confirms. Drawing areas are grey placeholders &mdash; drop in real sheet exports when you have them.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+      <span class="tag tag-neutral">Project: Riverbend Medical Center &mdash; Phase 2</span>
+      <span class="tag tag-neutral">Discipline: Electrical</span>
+      <span class="tag tag-outline">Compare slider is draggable</span>
+    </div>
+  </div>
+
+  <div id="s1" data-screen-label="01 Drawing index">
+    <p class="lbl"><span class="lid">01</span>Project hub &mdash; drawing index<span class="lnote">Landing screen. Rev status is the loudest thing on the row.</span></p>
+    <div class="scr">
+      <div style="display:flex;align-items:center;gap:14px;height:58px;padding:0 18px;border-bottom:1px solid var(--color-divider);flex:none">
+        <div style="display:flex;align-items:center;gap:9px">
+          <div style="width:24px;height:24px;border-radius:6px;border:1px solid var(--color-accent);display:flex;align-items:center;justify-content:center;color:var(--color-accent);font:600 11px ui-monospace,Menlo,monospace">D</div>
+          <span style="font:500 15px Inter,system-ui,sans-serif">Drawings</span>
+        </div>
+        <div style="width:1px;height:22px;background:var(--color-divider)"></div>
+        <button style="display:flex;align-items:center;gap:8px;background:transparent;border:1px solid var(--color-divider);border-radius:8px;padding:7px 11px;color:var(--color-text);font:400 13px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(233,233,237,.07)">
+          <i class="ph ph-buildings" style="font-size:15px;color:var(--color-neutral-400)"></i>Riverbend Medical Center &mdash; Ph 2<i class="ph ph-caret-down" style="font-size:12px;color:var(--color-neutral-500)"></i>
+        </button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:12px">
+          <div style="display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:8px;background:var(--color-accent-900);color:var(--color-accent-200);font:400 12px Inter,system-ui,sans-serif">
+            <i class="ph-fill ph-cloud-check" style="font-size:14px;color:var(--color-accent-400)"></i>Synced 4 min ago
+          </div>
+          <button class="btn btn-icon btn-secondary" style="width:36px;height:36px"><i class="ph ph-bell" style="font-size:16px"></i></button>
+          <div style="width:32px;height:32px;border-radius:50%;background:var(--color-neutral-800);color:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;font:500 12px Inter,system-ui,sans-serif">RM</div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex:1;min-height:0">
+        <div style="width:208px;flex:none;border-right:1px solid var(--color-divider);padding:18px 12px;display:flex;flex-direction:column;gap:22px">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font:500 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--color-neutral-600);padding:0 10px 8px">Disciplines</div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:var(--color-accent-900);color:var(--color-accent-100);font:500 13px Inter,system-ui,sans-serif;box-shadow:inset 0 0 0 1px var(--color-accent-700)">
+              <i class="ph-fill ph-lightning" style="font-size:15px;color:var(--color-accent-400)"></i>Electrical<span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">24</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;color:var(--color-neutral-300);font:400 13px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(233,233,237,.06)">
+              <i class="ph ph-fan" style="font-size:15px;color:var(--color-neutral-500)"></i>Mechanical<span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">18</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;color:var(--color-neutral-300);font:400 13px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(233,233,237,.06)">
+              <i class="ph ph-drop" style="font-size:15px;color:var(--color-neutral-500)"></i>Plumbing<span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">11</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;color:var(--color-neutral-300);font:400 13px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(233,233,237,.06)">
+              <i class="ph ph-blueprint" style="font-size:15px;color:var(--color-neutral-500)"></i>Architectural<span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">32</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;color:var(--color-neutral-300);font:400 13px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(233,233,237,.06)">
+              <i class="ph ph-fire-extinguisher" style="font-size:15px;color:var(--color-neutral-500)"></i>Fire alarm<span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">6</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font:500 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--color-neutral-600);padding:0 10px 8px">On this tablet</div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;color:var(--color-neutral-300);font:400 13px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(233,233,237,.06)">
+              <i class="ph ph-push-pin" style="font-size:15px;color:var(--color-neutral-500)"></i>Pinned offline<span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">6</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;color:var(--color-neutral-300);font:400 13px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(233,233,237,.06)">
+              <i class="ph ph-pencil-simple" style="font-size:15px;color:var(--color-neutral-500)"></i>My markups<span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">3</span>
+            </div>
+          </div>
+          <div style="margin-top:auto;padding:11px;border-radius:8px;border:1px solid var(--color-divider);display:flex;flex-direction:column;gap:6px">
+            <div style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-neutral-500)">Offline cache</div>
+            <div style="height:4px;border-radius:2px;background:var(--color-neutral-800);overflow:hidden"><div style="width:38%;height:100%;background:var(--color-accent-500)"></div></div>
+            <div style="font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">412 MB of 1.1 GB</div>
+          </div>
+        </div>
+
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:10px;padding:16px 20px 14px;flex:none">
+            <div style="position:relative;flex:1;max-width:340px">
+              <i class="ph ph-magnifying-glass" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--color-neutral-500)"></i>
+              <input class="input" placeholder="Sheet number, title or keyword" style="padding-left:34px;min-height:40px">
+            </div>
+            <div style="display:flex;gap:7px;margin-left:4px">
+              <span style="padding:8px 13px;border-radius:8px;font:400 13px Inter,system-ui,sans-serif;background:var(--color-neutral-800);color:var(--color-neutral-100);cursor:pointer">All sheets</span>
+              <span style="display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:8px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-300);border:1px solid var(--color-divider);cursor:pointer" style-hover="background:rgba(233,233,237,.06)">New revs<span style="font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-200);background:var(--color-accent-800);padding:1px 6px;border-radius:20px">2</span></span>
+              <span style="padding:8px 13px;border-radius:8px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-300);border:1px solid var(--color-divider);cursor:pointer" style-hover="background:rgba(233,233,237,.06)">Pinned</span>
+            </div>
+            <button class="btn btn-primary" style="margin-left:auto;min-height:40px"><i class="ph ph-upload-simple" style="font-size:15px"></i>Add revisions</button>
+          </div>
+
+          <sc-if value="{{ showRevAlert }}" hint-placeholder-val="{{ true }}">
+            <div style="margin:0 20px 14px;display:flex;align-items:center;gap:13px;padding:13px 15px;border-radius:8px;background:linear-gradient(90deg,var(--color-accent-900),rgba(43,39,65,0));box-shadow:inset 0 0 0 1px var(--color-accent-700);flex:none">
+              <i class="ph-fill ph-warning-circle" style="font-size:19px;color:var(--color-accent-400)"></i>
+              <div style="flex:1">
+                <div style="font:500 13px Inter,system-ui,sans-serif;color:var(--color-accent-100)">2 sheets on this tablet are behind the issued set</div>
+                <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400);margin-top:2px">E-101 and E-301 were reissued Sept 2. Your pinned copies are Rev 3.</div>
+              </div>
+              <button class="btn btn-primary" style="min-height:34px">Review changes</button>
+              <button class="btn btn-secondary" style="min-height:34px">Update all</button>
+            </div>
+          </sc-if>
+
+          <div style="flex:1;overflow:hidden;padding:0 20px 18px">
+            <table class="table" style="font-size:14px">
+              <thead>
+                <tr>
+                  <th style="width:96px;padding:8px 10px">Sheet</th>
+                  <th style="padding:8px 10px">Title</th>
+                  <th style="width:110px;padding:8px 10px">Current rev</th>
+                  <th style="width:118px;padding:8px 10px">Issued</th>
+                  <th style="width:186px;padding:8px 10px">Status</th>
+                  <th style="width:64px;padding:8px 10px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="cursor:pointer">
+                  <td style="padding:13px 10px;font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-101</td>
+                  <td style="padding:13px 10px">Power Plan &mdash; Level 1<div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:3px">Issued for construction &middot; 2 open markups</div></td>
+                  <td style="padding:13px 10px;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">Rev 4</td>
+                  <td style="padding:13px 10px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">Sept 2, 2026</td>
+                  <td style="padding:13px 10px"><span class="tag tag-accent"><i class="ph-fill ph-arrow-circle-up" style="font-size:12px;margin-right:5px"></i>New rev &mdash; you have Rev 3</span></td>
+                  <td style="padding:13px 10px;text-align:right;color:var(--color-neutral-600)"><i class="ph ph-push-pin-slash" style="font-size:15px;margin-right:9px"></i><i class="ph ph-caret-right" style="font-size:14px"></i></td>
+                </tr>
+                <tr style="cursor:pointer">
+                  <td style="padding:13px 10px;font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-102</td>
+                  <td style="padding:13px 10px">Power Plan &mdash; Level 2<div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:3px">Issued for construction</div></td>
+                  <td style="padding:13px 10px;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">Rev 2</td>
+                  <td style="padding:13px 10px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">Aug 12, 2026</td>
+                  <td style="padding:13px 10px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)"><i class="ph-fill ph-check-circle" style="font-size:13px;color:var(--color-accent-500)"></i>Current &middot; pinned</span></td>
+                  <td style="padding:13px 10px;text-align:right;color:var(--color-neutral-500)"><i class="ph-fill ph-push-pin" style="font-size:15px;margin-right:9px;color:var(--color-accent-500)"></i><i class="ph ph-caret-right" style="font-size:14px"></i></td>
+                </tr>
+                <tr style="cursor:pointer">
+                  <td style="padding:13px 10px;font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-201</td>
+                  <td style="padding:13px 10px">Lighting Plan &mdash; Level 1<div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:3px">Issued for construction</div></td>
+                  <td style="padding:13px 10px;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">Rev 2</td>
+                  <td style="padding:13px 10px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">Aug 12, 2026</td>
+                  <td style="padding:13px 10px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)"><i class="ph-fill ph-check-circle" style="font-size:13px;color:var(--color-accent-500)"></i>Current &middot; pinned</span></td>
+                  <td style="padding:13px 10px;text-align:right;color:var(--color-neutral-500)"><i class="ph-fill ph-push-pin" style="font-size:15px;margin-right:9px;color:var(--color-accent-500)"></i><i class="ph ph-caret-right" style="font-size:14px"></i></td>
+                </tr>
+                <tr style="cursor:pointer">
+                  <td style="padding:13px 10px;font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-301</td>
+                  <td style="padding:13px 10px">One-Line Diagram<div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:3px">Revised switchgear feeder sizes</div></td>
+                  <td style="padding:13px 10px;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">Rev 4</td>
+                  <td style="padding:13px 10px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">Sept 2, 2026</td>
+                  <td style="padding:13px 10px"><span class="tag tag-accent"><i class="ph-fill ph-arrow-circle-up" style="font-size:12px;margin-right:5px"></i>New rev &mdash; you have Rev 3</span></td>
+                  <td style="padding:13px 10px;text-align:right;color:var(--color-neutral-500)"><i class="ph-fill ph-push-pin" style="font-size:15px;margin-right:9px;color:var(--color-accent-500)"></i><i class="ph ph-caret-right" style="font-size:14px"></i></td>
+                </tr>
+                <tr style="cursor:pointer">
+                  <td style="padding:13px 10px;font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-401</td>
+                  <td style="padding:13px 10px">Panel Schedules &mdash; H1 through H6<div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:3px">Issued for construction</div></td>
+                  <td style="padding:13px 10px;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">Rev 1</td>
+                  <td style="padding:13px 10px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">Jul 28, 2026</td>
+                  <td style="padding:13px 10px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)"><i class="ph-fill ph-check-circle" style="font-size:13px;color:var(--color-accent-500)"></i>Current</span></td>
+                  <td style="padding:13px 10px;text-align:right;color:var(--color-neutral-600)"><i class="ph ph-push-pin-slash" style="font-size:15px;margin-right:9px"></i><i class="ph ph-caret-right" style="font-size:14px"></i></td>
+                </tr>
+                <tr style="cursor:pointer">
+                  <td style="padding:13px 10px;font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-501</td>
+                  <td style="padding:13px 10px">Details &mdash; Feeder &amp; Grounding<div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:3px">In review by engineer of record</div></td>
+                  <td style="padding:13px 10px;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">Rev 2</td>
+                  <td style="padding:13px 10px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">Aug 30, 2026</td>
+                  <td style="padding:13px 10px"><span class="tag tag-neutral">Pending approval</span></td>
+                  <td style="padding:13px 10px;text-align:right;color:var(--color-neutral-600)"><i class="ph ph-push-pin-slash" style="font-size:15px;margin-right:9px"></i><i class="ph ph-caret-right" style="font-size:14px"></i></td>
+                </tr>
+                <tr style="cursor:pointer">
+                  <td style="padding:13px 10px;font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-601</td>
+                  <td style="padding:13px 10px">Site Lighting &amp; Duct Bank<div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:3px">Issued for construction</div></td>
+                  <td style="padding:13px 10px;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">Rev 1</td>
+                  <td style="padding:13px 10px;font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">Jul 28, 2026</td>
+                  <td style="padding:13px 10px"><span style="display:inline-flex;align-items:center;gap:6px;font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)"><i class="ph-fill ph-check-circle" style="font-size:13px;color:var(--color-accent-500)"></i>Current</span></td>
+                  <td style="padding:13px 10px;text-align:right;color:var(--color-neutral-600)"><i class="ph ph-push-pin-slash" style="font-size:15px;margin-right:9px"></i><i class="ph ph-caret-right" style="font-size:14px"></i></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="s2" data-screen-label="02 Sheet viewer">
+    <p class="lbl"><span class="lid">02</span>Single sheet viewer<span class="lnote">Drawing gets the whole screen; chrome collapses to two edges. Grey area is a placeholder for the sheet.</span></p>
+    <div class="scr">
+      <div style="display:flex;align-items:center;gap:14px;height:56px;padding:0 16px;border-bottom:1px solid var(--color-divider);flex:none">
+        <button class="btn btn-secondary btn-icon" style="width:36px;height:36px"><i class="ph ph-arrow-left" style="font-size:16px"></i></button>
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <span style="font:500 15px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-101</span>
+          <span style="font:500 15px Inter,system-ui,sans-serif">Power Plan &mdash; Level 1</span>
+        </div>
+        <button style="display:flex;align-items:center;gap:7px;background:transparent;border:1px solid var(--color-accent-700);border-radius:8px;padding:6px 10px;color:var(--color-accent-200);font:400 12px Inter,system-ui,sans-serif;cursor:pointer" style-hover="background:rgba(145,132,217,.12)">
+          Rev 3 &middot; on this tablet<i class="ph ph-caret-down" style="font-size:12px"></i>
+        </button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <button class="btn btn-secondary" style="min-height:36px"><i class="ph ph-git-diff" style="font-size:15px"></i>Compare revs</button>
+          <button class="btn btn-secondary" style="min-height:36px"><i class="ph ph-pencil-simple" style="font-size:15px"></i>Markup</button>
+          <button class="btn btn-secondary" style="min-height:36px"><i class="ph ph-share-network" style="font-size:15px"></i>Share</button>
+          <button class="btn btn-secondary btn-icon" style="width:36px;height:36px"><i class="ph ph-dots-three" style="font-size:18px"></i></button>
+        </div>
+      </div>
+
+      <div style="position:relative;flex:1;min-height:0;background:#0d0f1a;display:flex;align-items:center;justify-content:center;padding:26px 26px 0">
+        <div style="position:relative;width:1000px;height:590px;background:#e4e7f5;border-radius:3px;box-shadow:0 18px 50px rgba(0,0,0,.6)">
+          <div style="position:absolute;inset:0;background-image:linear-gradient(#b2b6ca 1px,transparent 1px),linear-gradient(90deg,#b2b6ca 1px,transparent 1px);background-size:40px 40px;opacity:.3"></div>
+          <div style="position:absolute;left:34px;top:30px;right:212px;bottom:34px;border:2px solid #595d6c"></div>
+          <div style="position:absolute;left:34px;top:30px;width:250px;height:200px;border:2px solid #595d6c;background:rgba(147,151,171,.14)"></div>
+          <div style="position:absolute;left:284px;top:30px;width:190px;height:120px;border:2px solid #595d6c"></div>
+          <div style="position:absolute;left:474px;top:30px;right:212px;height:200px;border:2px solid #595d6c;background:rgba(147,151,171,.08)"></div>
+          <div style="position:absolute;left:34px;top:330px;width:330px;bottom:34px;border:2px solid #595d6c"></div>
+          <div style="position:absolute;left:120px;top:118px;right:300px;height:2px;background:repeating-linear-gradient(90deg,#75798c 0 14px,transparent 14px 22px)"></div>
+          <div style="position:absolute;left:120px;top:118px;width:2px;height:170px;background:repeating-linear-gradient(#75798c 0 14px,transparent 14px 22px)"></div>
+          <div style="position:absolute;left:112px;top:280px;width:18px;height:18px;border:2px solid #3f424d;border-radius:50%;background:#e4e7f5"></div>
+          <div style="position:absolute;left:404px;top:110px;width:18px;height:18px;border:2px solid #3f424d;border-radius:50%;background:#e4e7f5"></div>
+          <div style="position:absolute;left:600px;top:110px;width:18px;height:18px;border:2px solid #3f424d;border-radius:50%;background:#e4e7f5"></div>
+          <div style="position:absolute;right:34px;top:30px;width:158px;bottom:34px;border:2px solid #595d6c;display:flex;flex-direction:column">
+            <div style="padding:10px;border-bottom:2px solid #595d6c;font:500 11px Inter,system-ui,sans-serif;color:#292b31">DINTO ELECTRIC</div>
+            <div style="padding:10px;border-bottom:2px solid #595d6c;font:400 10px Inter,system-ui,sans-serif;color:#3f424d;line-height:1.5">RIVERBEND MEDICAL CENTER<br>PHASE 2</div>
+            <div style="padding:10px;border-bottom:2px solid #595d6c;font:400 10px Inter,system-ui,sans-serif;color:#3f424d;line-height:1.5">POWER PLAN<br>LEVEL 1</div>
+            <div style="margin-top:auto;padding:10px;font:500 18px ui-monospace,Menlo,monospace;color:#292b31">E-101</div>
+          </div>
+          <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font:400 11px ui-monospace,Menlo,monospace;letter-spacing:.14em;color:#75798c;background:rgba(228,231,245,.9);padding:5px 10px;border:1px dashed #9397ab">PLACEHOLDER &mdash; SHEET RASTER</div>
+        </div>
+
+        <div style="position:absolute;left:24px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:4px;padding:6px;border-radius:12px;background:rgba(35,37,50,.94);box-shadow:0 0 0 1px #3f424d,0 10px 26px rgba(0,0,0,.5)">
+          <button class="btn btn-ghost btn-icon" style="width:44px;height:44px"><i class="ph ph-magnifying-glass-plus" style="font-size:19px"></i></button>
+          <button class="btn btn-ghost btn-icon" style="width:44px;height:44px"><i class="ph ph-magnifying-glass-minus" style="font-size:19px"></i></button>
+          <button class="btn btn-ghost btn-icon" style="width:44px;height:44px"><i class="ph ph-corners-out" style="font-size:19px"></i></button>
+          <div style="height:1px;background:var(--color-divider);margin:3px 6px"></div>
+          <button class="btn btn-ghost btn-icon" style="width:44px;height:44px"><i class="ph ph-ruler" style="font-size:19px"></i></button>
+          <button class="btn btn-ghost btn-icon" style="width:44px;height:44px"><i class="ph ph-pencil-simple" style="font-size:19px"></i></button>
+          <button class="btn btn-ghost btn-icon" style="width:44px;height:44px"><i class="ph ph-stack-simple" style="font-size:19px"></i></button>
+        </div>
+
+        <sc-if value="{{ showRevAlert }}" hint-placeholder-val="{{ true }}">
+          <div style="position:absolute;right:24px;bottom:26px;display:flex;align-items:center;gap:13px;padding:13px 15px;border-radius:10px;background:rgba(35,37,50,.96);box-shadow:0 0 0 1px var(--color-accent-700),0 12px 30px rgba(0,0,0,.55);max-width:390px">
+            <i class="ph-fill ph-arrow-circle-up" style="font-size:20px;color:var(--color-accent-400)"></i>
+            <div style="flex:1">
+              <div style="font:500 13px Inter,system-ui,sans-serif;color:var(--color-accent-100)">Rev 4 was issued Sept 2</div>
+              <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400);margin-top:2px">6 changed areas, mostly in the east wing.</div>
+            </div>
+            <button class="btn btn-primary" style="min-height:34px">Compare</button>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;height:96px;padding:0 16px;border-top:1px solid var(--color-divider);flex:none;background:var(--color-bg)">
+        <div style="display:flex;gap:10px;overflow:hidden">
+          <div style="width:78px;height:62px;border-radius:4px;background:#e4e7f5;box-shadow:0 0 0 2px var(--color-accent);position:relative;flex:none">
+            <div style="position:absolute;inset:6px;border:1px solid #9397ab"></div>
+            <div style="position:absolute;left:3px;bottom:2px;font:500 8px ui-monospace,Menlo,monospace;color:#3f424d">E-101</div>
+          </div>
+          <div style="width:78px;height:62px;border-radius:4px;background:#cfd3e5;position:relative;flex:none;opacity:.8">
+            <div style="position:absolute;inset:6px;border:1px solid #9397ab"></div>
+            <div style="position:absolute;left:3px;bottom:2px;font:500 8px ui-monospace,Menlo,monospace;color:#3f424d">E-102</div>
+          </div>
+          <div style="width:78px;height:62px;border-radius:4px;background:#cfd3e5;position:relative;flex:none;opacity:.8">
+            <div style="position:absolute;inset:6px;border:1px solid #9397ab"></div>
+            <div style="position:absolute;left:3px;bottom:2px;font:500 8px ui-monospace,Menlo,monospace;color:#3f424d">E-201</div>
+          </div>
+          <div style="width:78px;height:62px;border-radius:4px;background:#cfd3e5;position:relative;flex:none;opacity:.8">
+            <div style="position:absolute;inset:6px;border:1px solid #9397ab"></div>
+            <div style="position:absolute;left:3px;bottom:2px;font:500 8px ui-monospace,Menlo,monospace;color:#3f424d">E-301</div>
+          </div>
+          <div style="width:78px;height:62px;border-radius:4px;background:#cfd3e5;position:relative;flex:none;opacity:.8">
+            <div style="position:absolute;inset:6px;border:1px solid #9397ab"></div>
+            <div style="position:absolute;left:3px;bottom:2px;font:500 8px ui-monospace,Menlo,monospace;color:#3f424d">E-401</div>
+          </div>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:16px">
+          <div style="display:flex;align-items:center;gap:8px;font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-500)"><i class="ph-fill ph-push-pin" style="font-size:14px;color:var(--color-accent-500)"></i>Available offline</div>
+          <div style="font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1 of 24</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="s3" data-screen-label="03 Upload revisions">
+    <p class="lbl"><span class="lid">03</span>Add revisions &mdash; auto-matched<span class="lnote">The drop does the work; the person only confirms the matches and the reason for issue.</span></p>
+    <div class="scr" style="position:relative;justify-content:center;align-items:center;background:var(--color-bg)">
+      <div style="position:absolute;inset:0;background:rgba(13,15,26,.72);backdrop-filter:blur(2px)"></div>
+      <div style="position:relative;width:820px;max-height:740px;display:flex;flex-direction:column;border-radius:14px;background:var(--color-surface);box-shadow:0 0 0 1px #595d6c,0 26px 60px rgba(0,0,0,.7);overflow:hidden">
+        <div style="display:flex;align-items:center;gap:12px;padding:18px 20px 14px;flex:none">
+          <div>
+            <div style="font:500 17px Inter,system-ui,sans-serif">Add revisions</div>
+            <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-500);margin-top:3px">Riverbend Medical Center &mdash; Ph 2 &middot; Electrical</div>
+          </div>
+          <button class="btn btn-secondary btn-icon" style="margin-left:auto;width:34px;height:34px"><i class="ph ph-x" style="font-size:16px"></i></button>
+        </div>
+
+        <div style="margin:0 20px 16px;padding:20px;border-radius:10px;border:1px dashed var(--color-accent-700);background:var(--color-accent-900);display:flex;align-items:center;gap:14px;flex:none">
+          <i class="ph ph-file-arrow-up" style="font-size:26px;color:var(--color-accent-400)"></i>
+          <div style="flex:1">
+            <div style="font:500 13px Inter,system-ui,sans-serif;color:var(--color-accent-100)">4 files read &middot; sheet numbers pulled from the title block</div>
+            <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400);margin-top:3px">3 matched an existing sheet. 1 looks new &mdash; confirm below.</div>
+          </div>
+          <button class="btn btn-secondary" style="min-height:34px">Add more files</button>
+        </div>
+
+        <div style="flex:1;overflow:hidden;padding:0 20px;display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:10px;background:var(--color-bg);box-shadow:inset 0 0 0 1px var(--color-neutral-800)">
+            <i class="ph-fill ph-file-pdf" style="font-size:21px;color:var(--color-neutral-500)"></i>
+            <div style="flex:1;min-width:0">
+              <div style="font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">E-101_POWER-PLAN-L1_Rev4.pdf</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:5px">
+                <i class="ph ph-arrow-right" style="font-size:12px;color:var(--color-neutral-600)"></i>
+                <span style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">E-101 Power Plan &mdash; Level 1</span>
+                <span class="tag tag-accent" style="font-size:10px;padding:2px 8px">Rev 4 supersedes Rev 3</span>
+                <span style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-accent-400)">98% match</span>
+              </div>
+            </div>
+            <button class="btn btn-ghost" style="min-height:32px;font-size:12px">Change</button>
+            <i class="ph-fill ph-check-circle" style="font-size:20px;color:var(--color-accent-500)"></i>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:10px;background:var(--color-bg);box-shadow:inset 0 0 0 1px var(--color-neutral-800)">
+            <i class="ph-fill ph-file-pdf" style="font-size:21px;color:var(--color-neutral-500)"></i>
+            <div style="flex:1;min-width:0">
+              <div style="font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">E-301_ONE-LINE_R4_20260902.pdf</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:5px">
+                <i class="ph ph-arrow-right" style="font-size:12px;color:var(--color-neutral-600)"></i>
+                <span style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">E-301 One-Line Diagram</span>
+                <span class="tag tag-accent" style="font-size:10px;padding:2px 8px">Rev 4 supersedes Rev 3</span>
+                <span style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-accent-400)">96% match</span>
+              </div>
+            </div>
+            <button class="btn btn-ghost" style="min-height:32px;font-size:12px">Change</button>
+            <i class="ph-fill ph-check-circle" style="font-size:20px;color:var(--color-accent-500)"></i>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:10px;background:var(--color-bg);box-shadow:inset 0 0 0 1px var(--color-neutral-800)">
+            <i class="ph-fill ph-file-pdf" style="font-size:21px;color:var(--color-neutral-500)"></i>
+            <div style="flex:1;min-width:0">
+              <div style="font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">E-501-details-grounding-rev3.pdf</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:5px">
+                <i class="ph ph-arrow-right" style="font-size:12px;color:var(--color-neutral-600)"></i>
+                <span style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)">E-501 Details &mdash; Feeder &amp; Grounding</span>
+                <span class="tag tag-accent" style="font-size:10px;padding:2px 8px">Rev 3 supersedes Rev 2</span>
+                <span style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-accent-400)">91% match</span>
+              </div>
+            </div>
+            <button class="btn btn-ghost" style="min-height:32px;font-size:12px">Change</button>
+            <i class="ph-fill ph-check-circle" style="font-size:20px;color:var(--color-accent-500)"></i>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:10px;background:var(--color-bg);box-shadow:inset 0 0 0 1px var(--color-accent-700)">
+            <i class="ph-fill ph-file-pdf" style="font-size:21px;color:var(--color-accent-400)"></i>
+            <div style="flex:1;min-width:0">
+              <div style="font:400 13px ui-monospace,Menlo,monospace;color:var(--color-neutral-200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">scan_2026-09-02_14-08.pdf</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:5px">
+                <i class="ph ph-question" style="font-size:13px;color:var(--color-accent-400)"></i>
+                <span style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-accent-200)">No sheet number found &mdash; pick a sheet or file it as new</span>
+              </div>
+            </div>
+            <select class="input" style="width:236px;min-height:34px;font-size:12px;padding-right:26px">
+              <option>Choose a sheet&hellip;</option>
+              <option>E-102 Power Plan &mdash; Level 2</option>
+              <option>E-201 Lighting Plan &mdash; Level 1</option>
+              <option>File as a new sheet</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:14px;padding:18px 20px;margin-top:16px;flex:none;border-top:1px solid var(--color-divider)">
+          <div class="field" style="width:262px"><label>Reason for issue</label>
+            <select class="input" style="min-height:38px;padding-right:26px"><option>Revised for construction</option><option>ASI / bulletin</option><option>RFI response</option><option>Permit comments</option></select>
+          </div>
+          <div class="field" style="width:150px"><label>Issue date</label><input class="input" value="Sept 2, 2026" style="min-height:38px"></div>
+          <div class="field" style="flex:1"><label>Note to the field (optional)</label><input class="input" placeholder="e.g. feeder to H4 upsized to 4in, reroute above ceiling" style="min-height:38px"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:0 20px 20px;flex:none">
+          <label class="radio"><input type="checkbox" checked><span class="dot"></span>Notify the 6 people with these sheets pinned</label>
+          <button class="btn btn-secondary" style="margin-left:auto;min-height:38px">Save as draft</button>
+          <button class="btn btn-primary" style="min-height:38px"><i class="ph ph-check" style="font-size:15px"></i>Publish 4 revisions</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="s4" data-screen-label="04 Version history and compare">
+    <p class="lbl"><span class="lid">04</span>Version history &amp; compare<span class="lnote">Drag the divider on the sheet to wipe between Rev 3 and Rev 4. The toggle switches to side-by-side.</span></p>
+    <div class="scr">
+      <div style="display:flex;align-items:center;gap:14px;height:56px;padding:0 16px;border-bottom:1px solid var(--color-divider);flex:none">
+        <button class="btn btn-secondary btn-icon" style="width:36px;height:36px"><i class="ph ph-arrow-left" style="font-size:16px"></i></button>
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <span style="font:500 15px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-101</span>
+          <span style="font:500 15px Inter,system-ui,sans-serif">Power Plan &mdash; Level 1</span>
+          <span style="font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-500)">&middot; version history</span>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+          <div class="seg">
+            <label class="seg-opt"><input type="radio" name="cmp" checked="{{ isOverlay }}" onChange="{{ setOverlay }}"><i class="ph ph-stack-simple" style="font-size:14px"></i>Overlay wipe</label>
+            <label class="seg-opt"><input type="radio" name="cmp" checked="{{ isSide }}" onChange="{{ setSide }}"><i class="ph ph-columns" style="font-size:14px"></i>Side by side</label>
+          </div>
+          <button class="btn btn-primary" style="min-height:36px"><i class="ph ph-download-simple" style="font-size:15px"></i>Update my copy to Rev 4</button>
+        </div>
+      </div>
+
+      <div style="display:flex;flex:1;min-height:0">
+        <div style="width:288px;flex:none;border-right:1px solid var(--color-divider);display:flex;flex-direction:column;overflow:hidden">
+          <div style="padding:16px 16px 10px;font:500 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--color-neutral-600)">Revisions</div>
+          <div style="padding:0 12px 14px;display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;gap:11px;padding:12px;border-radius:9px;background:var(--color-accent-900);box-shadow:inset 0 0 0 1px var(--color-accent-700);cursor:pointer">
+              <div style="width:9px;height:9px;border-radius:50%;background:var(--color-accent-400);margin-top:4px;flex:none;box-shadow:0 0 0 4px rgba(145,132,217,.18)"></div>
+              <div style="flex:1">
+                <div style="display:flex;align-items:baseline;gap:8px"><span style="font:500 13px Inter,system-ui,sans-serif;color:var(--color-accent-100)">Rev 4</span><span class="tag tag-outline" style="font-size:10px;padding:1px 7px">Issued</span></div>
+                <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400);margin-top:4px">Sept 2, 2026 &middot; K. Alvarez</div>
+                <div style="font:400 12px/1.5 Inter,system-ui,sans-serif;color:var(--color-neutral-500);margin-top:5px">ASI-14: feeder to H4 upsized, east wing receptacles relocated.</div>
+                <div style="font:400 11px ui-monospace,Menlo,monospace;color:var(--color-accent-400);margin-top:6px">6 changed areas</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:11px;padding:12px;border-radius:9px;box-shadow:inset 0 0 0 1px var(--color-neutral-800);cursor:pointer" style-hover="background:rgba(233,233,237,.05)">
+              <div style="width:9px;height:9px;border-radius:50%;background:var(--color-neutral-500);margin-top:4px;flex:none"></div>
+              <div style="flex:1">
+                <div style="display:flex;align-items:baseline;gap:8px"><span style="font:500 13px Inter,system-ui,sans-serif;color:var(--color-neutral-200)">Rev 3</span><span class="tag tag-neutral" style="font-size:10px;padding:1px 7px">On your tablet</span></div>
+                <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-500);margin-top:4px">Aug 12, 2026 &middot; K. Alvarez</div>
+                <div style="font:400 12px/1.5 Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:5px">Revised for construction.</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:11px;padding:12px;border-radius:9px;cursor:pointer" style-hover="background:rgba(233,233,237,.05)">
+              <div style="width:9px;height:9px;border-radius:50%;background:var(--color-neutral-700);margin-top:4px;flex:none"></div>
+              <div style="flex:1">
+                <div style="font:500 13px Inter,system-ui,sans-serif;color:var(--color-neutral-300)">Rev 2</div>
+                <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:4px">Jul 28, 2026 &middot; RFI-08 response</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:11px;padding:12px;border-radius:9px;cursor:pointer" style-hover="background:rgba(233,233,237,.05)">
+              <div style="width:9px;height:9px;border-radius:50%;background:var(--color-neutral-700);margin-top:4px;flex:none"></div>
+              <div style="flex:1">
+                <div style="font:500 13px Inter,system-ui,sans-serif;color:var(--color-neutral-300)">Rev 1</div>
+                <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:4px">Jun 15, 2026 &middot; Permit set</div>
+              </div>
+            </div>
+          </div>
+
+          <sc-if value="{{ showChangedAreas }}" hint-placeholder-val="{{ true }}">
+            <div style="border-top:1px solid var(--color-divider);padding:14px 12px;display:flex;flex-direction:column;gap:7px;overflow:hidden">
+              <div style="font:500 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--color-neutral-600);padding:0 4px 3px">Changed areas &middot; Rev 3 &rarr; 4</div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;background:rgba(145,132,217,.1);cursor:pointer">
+                <span style="width:20px;height:20px;border-radius:5px;background:var(--color-accent-800);color:var(--color-accent-100);font:500 11px ui-monospace,Menlo,monospace;display:flex;align-items:center;justify-content:center;flex:none">1</span>
+                <span style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-300);flex:1">Feeder to panel H4 &mdash; 3in to 4in</span>
+                <i class="ph ph-arrow-square-out" style="font-size:13px;color:var(--color-neutral-600)"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(233,233,237,.05)">
+                <span style="width:20px;height:20px;border-radius:5px;background:var(--color-neutral-800);color:var(--color-neutral-200);font:500 11px ui-monospace,Menlo,monospace;display:flex;align-items:center;justify-content:center;flex:none">2</span>
+                <span style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400);flex:1">East wing receptacles relocated</span>
+                <i class="ph ph-arrow-square-out" style="font-size:13px;color:var(--color-neutral-600)"></i>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer" style-hover="background:rgba(233,233,237,.05)">
+                <span style="width:20px;height:20px;border-radius:5px;background:var(--color-neutral-800);color:var(--color-neutral-200);font:500 11px ui-monospace,Menlo,monospace;display:flex;align-items:center;justify-content:center;flex:none">3</span>
+                <span style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400);flex:1">Note 6 revised &mdash; conduit routing</span>
+                <i class="ph ph-arrow-square-out" style="font-size:13px;color:var(--color-neutral-600)"></i>
+              </div>
+              <button class="btn btn-ghost" style="align-self:flex-start;font-size:12px;min-height:30px">Show all 6</button>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="flex:1;min-width:0;background:#0d0f1a;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--color-divider);flex:none">
+            <span style="display:flex;align-items:center;gap:7px;font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-400)"><span style="width:10px;height:2px;background:var(--color-neutral-500)"></span>Rev 3 &middot; Aug 12</span>
+            <span style="display:flex;align-items:center;gap:7px;font:400 12px Inter,system-ui,sans-serif;color:var(--color-accent-200)"><span style="width:10px;height:2px;background:var(--color-accent-400)"></span>Rev 4 &middot; Sept 2</span>
+            <span style="margin-left:auto;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">Fit to width &middot; 68%</span>
+          </div>
+
+          <sc-if value="{{ isOverlay }}" hint-placeholder-val="{{ true }}">
+            <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:22px">
+              <div ref="{{ wrapRef }}" onPointerDown="{{ onDrag }}" style="position:relative;width:100%;max-width:760px;aspect-ratio:1.5;background:#e4e7f5;border-radius:3px;box-shadow:0 18px 46px rgba(0,0,0,.6);cursor:ew-resize;touch-action:none;overflow:hidden;user-select:none">
+                <div style="position:absolute;inset:0;background-image:linear-gradient(#b2b6ca 1px,transparent 1px),linear-gradient(90deg,#b2b6ca 1px,transparent 1px);background-size:36px 36px;opacity:.3"></div>
+                <div style="position:absolute;left:26px;top:22px;right:24px;bottom:24px;border:2px solid #595d6c"></div>
+                <div style="position:absolute;left:26px;top:22px;width:200px;height:150px;border:2px solid #595d6c;background:rgba(147,151,171,.13)"></div>
+                <div style="position:absolute;left:226px;top:22px;width:150px;height:96px;border:2px solid #595d6c"></div>
+                <div style="position:absolute;left:26px;bottom:24px;width:260px;height:130px;border:2px solid #595d6c"></div>
+                <div style="position:absolute;left:96px;top:96px;right:150px;height:2px;background:repeating-linear-gradient(90deg,#75798c 0 12px,transparent 12px 19px)"></div>
+                <div style="position:absolute;left:52px;top:44px;font:400 10px ui-monospace,Menlo,monospace;color:#75798c">REV 3</div>
+
+                <div style="position:absolute;inset:0;clip-path:inset(0 {{ clip }}% 0 0)">
+                  <div style="position:absolute;inset:0;background:#eeeffb"></div>
+                  <div style="position:absolute;inset:0;background-image:linear-gradient(#b2b6ca 1px,transparent 1px),linear-gradient(90deg,#b2b6ca 1px,transparent 1px);background-size:36px 36px;opacity:.3"></div>
+                  <div style="position:absolute;left:26px;top:22px;right:24px;bottom:24px;border:2px solid #595d6c"></div>
+                  <div style="position:absolute;left:26px;top:22px;width:200px;height:150px;border:2px solid #595d6c;background:rgba(147,151,171,.13)"></div>
+                  <div style="position:absolute;left:226px;top:22px;width:150px;height:96px;border:2px solid #595d6c"></div>
+                  <div style="position:absolute;left:26px;bottom:24px;width:260px;height:130px;border:2px solid #595d6c"></div>
+                  <div style="position:absolute;left:96px;top:96px;right:150px;height:3px;background:#5d5294"></div>
+                  <div style="position:absolute;left:52px;top:44px;font:400 10px ui-monospace,Menlo,monospace;color:#5d5294">REV 4</div>
+                  <div style="position:absolute;left:150px;top:66px;width:130px;height:64px;border:2px solid #796cbf;border-radius:3px;background:rgba(121,108,191,.12)"></div>
+                  <div style="position:absolute;left:150px;top:44px;padding:2px 7px;border-radius:4px;background:#5d5294;color:#f5f4ff;font:500 10px ui-monospace,Menlo,monospace">1 &middot; H4 FEEDER 4&quot;</div>
+                  <div style="position:absolute;right:190px;bottom:80px;width:110px;height:70px;border:2px solid #796cbf;border-radius:3px;background:rgba(121,108,191,.12)"></div>
+                  <div style="position:absolute;right:190px;bottom:154px;padding:2px 7px;border-radius:4px;background:#5d5294;color:#f5f4ff;font:500 10px ui-monospace,Menlo,monospace">2 &middot; RECEPTACLES</div>
+                </div>
+
+                <div style="position:absolute;top:0;bottom:0;left:{{ pos }}%;width:2px;background:var(--color-accent);box-shadow:0 0 14px rgba(145,132,217,.7)">
+                  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:42px;height:42px;border-radius:50%;background:#232532;box-shadow:0 0 0 1px var(--color-accent),0 6px 16px rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:var(--color-accent)"><i class="ph ph-arrows-horizontal" style="font-size:18px"></i></div>
+                </div>
+                <div style="position:absolute;left:10px;bottom:10px;padding:3px 8px;border-radius:5px;background:rgba(35,37,50,.9);color:var(--color-neutral-300);font:400 10px ui-monospace,Menlo,monospace">REV 4</div>
+                <div style="position:absolute;right:10px;bottom:10px;padding:3px 8px;border-radius:5px;background:rgba(35,37,50,.9);color:var(--color-neutral-300);font:400 10px ui-monospace,Menlo,monospace">REV 3</div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isSide }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;display:flex;gap:16px;align-items:center;justify-content:center;padding:22px">
+              <div style="position:relative;flex:1;max-width:400px;aspect-ratio:1.5;background:#e4e7f5;border-radius:3px;box-shadow:0 14px 36px rgba(0,0,0,.55)">
+                <div style="position:absolute;inset:0;background-image:linear-gradient(#b2b6ca 1px,transparent 1px),linear-gradient(90deg,#b2b6ca 1px,transparent 1px);background-size:28px 28px;opacity:.3"></div>
+                <div style="position:absolute;left:18px;top:16px;right:16px;bottom:18px;border:2px solid #595d6c"></div>
+                <div style="position:absolute;left:18px;top:16px;width:130px;height:100px;border:2px solid #595d6c;background:rgba(147,151,171,.13)"></div>
+                <div style="position:absolute;left:66px;top:70px;right:100px;height:2px;background:repeating-linear-gradient(90deg,#75798c 0 10px,transparent 10px 16px)"></div>
+                <div style="position:absolute;left:10px;bottom:8px;padding:3px 8px;border-radius:5px;background:rgba(35,37,50,.9);color:var(--color-neutral-300);font:400 10px ui-monospace,Menlo,monospace">REV 3 &middot; AUG 12</div>
+              </div>
+              <div style="position:relative;flex:1;max-width:400px;aspect-ratio:1.5;background:#eeeffb;border-radius:3px;box-shadow:0 0 0 1px var(--color-accent-700),0 14px 36px rgba(0,0,0,.55)">
+                <div style="position:absolute;inset:0;background-image:linear-gradient(#b2b6ca 1px,transparent 1px),linear-gradient(90deg,#b2b6ca 1px,transparent 1px);background-size:28px 28px;opacity:.3"></div>
+                <div style="position:absolute;left:18px;top:16px;right:16px;bottom:18px;border:2px solid #595d6c"></div>
+                <div style="position:absolute;left:18px;top:16px;width:130px;height:100px;border:2px solid #595d6c;background:rgba(147,151,171,.13)"></div>
+                <div style="position:absolute;left:66px;top:70px;right:100px;height:3px;background:#5d5294"></div>
+                <div style="position:absolute;left:100px;top:48px;width:96px;height:48px;border:2px solid #796cbf;border-radius:3px;background:rgba(121,108,191,.12)"></div>
+                <div style="position:absolute;left:100px;top:30px;padding:2px 6px;border-radius:4px;background:#5d5294;color:#f5f4ff;font:500 9px ui-monospace,Menlo,monospace">1</div>
+                <div style="position:absolute;right:60px;bottom:52px;width:80px;height:52px;border:2px solid #796cbf;border-radius:3px;background:rgba(121,108,191,.12)"></div>
+                <div style="position:absolute;right:60px;bottom:108px;padding:2px 6px;border-radius:4px;background:#5d5294;color:#f5f4ff;font:500 9px ui-monospace,Menlo,monospace">2</div>
+                <div style="position:absolute;left:10px;bottom:8px;padding:3px 8px;border-radius:5px;background:rgba(35,37,50,.9);color:var(--color-accent-200);font:400 10px ui-monospace,Menlo,monospace">REV 4 &middot; SEPT 2</div>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="s5" data-screen-label="05 Field phone view">
+    <p class="lbl"><span class="lid">05</span>Field view on a phone<span class="lnote">Same data, one column, gloves-on targets. What a foreman opens with one hand.</span></p>
+    <div style="width:390px;height:844px;background:var(--color-bg);color:var(--color-text);border-radius:38px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 0 0 1px #3f424d,0 24px 60px rgba(0,0,0,.6)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 6px;font:500 13px Inter,system-ui,sans-serif;color:var(--color-neutral-300);flex:none">
+        <span>9:41</span><span style="display:flex;gap:6px;align-items:center"><i class="ph-fill ph-cell-signal-medium" style="font-size:14px"></i><i class="ph-fill ph-battery-high" style="font-size:15px"></i></span>
+      </div>
+      <div style="padding:8px 18px 14px;flex:none">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="flex:1">
+            <div style="font:500 19px Inter,system-ui,sans-serif">Riverbend Ph 2</div>
+            <div style="font:400 12px Inter,system-ui,sans-serif;color:var(--color-neutral-500);margin-top:3px">Electrical &middot; 24 sheets &middot; synced 4 min ago</div>
+          </div>
+          <button class="btn btn-secondary btn-icon" style="width:44px;height:44px"><i class="ph ph-magnifying-glass" style="font-size:18px"></i></button>
+        </div>
+      </div>
+
+      <sc-if value="{{ showRevAlert }}" hint-placeholder-val="{{ true }}">
+        <div style="margin:0 14px 12px;padding:14px;border-radius:10px;background:linear-gradient(135deg,var(--color-accent-900),rgba(43,39,65,.35));box-shadow:inset 0 0 0 1px var(--color-accent-700);flex:none">
+          <div style="display:flex;align-items:center;gap:9px">
+            <i class="ph-fill ph-warning-circle" style="font-size:18px;color:var(--color-accent-400)"></i>
+            <div style="font:500 14px Inter,system-ui,sans-serif;color:var(--color-accent-100)">2 sheets have a newer rev</div>
+          </div>
+          <div style="font:400 13px/1.5 Inter,system-ui,sans-serif;color:var(--color-neutral-400);margin-top:6px">E-101 and E-301 were reissued Sept 2. Don&rsquo;t build off Rev 3.</div>
+          <button class="btn btn-primary btn-block" style="min-height:44px;margin-top:11px">Review and update</button>
+        </div>
+      </sc-if>
+
+      <div style="flex:1;overflow:hidden;padding:0 14px;display:flex;flex-direction:column;gap:9px">
+        <div style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:10px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-accent-800)">
+          <div style="width:44px;height:56px;border-radius:3px;background:#e4e7f5;position:relative;flex:none"><div style="position:absolute;inset:5px;border:1px solid #9397ab"></div></div>
+          <div style="flex:1;min-width:0">
+            <div style="font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-101</div>
+            <div style="font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-200);margin-top:3px">Power Plan &mdash; Level 1</div>
+            <div style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-accent-300);margin-top:5px">Rev 4 issued &middot; you have Rev 3</div>
+          </div>
+          <i class="ph ph-caret-right" style="font-size:16px;color:var(--color-neutral-600)"></i>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:10px;background:var(--color-surface)">
+          <div style="width:44px;height:56px;border-radius:3px;background:#cfd3e5;position:relative;flex:none"><div style="position:absolute;inset:5px;border:1px solid #9397ab"></div></div>
+          <div style="flex:1;min-width:0">
+            <div style="font:500 14px ui-monospace,Menlo,monospace;color:var(--color-neutral-400)">E-102</div>
+            <div style="font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-200);margin-top:3px">Power Plan &mdash; Level 2</div>
+            <div style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:5px">Rev 2 &middot; current &middot; offline</div>
+          </div>
+          <i class="ph ph-caret-right" style="font-size:16px;color:var(--color-neutral-600)"></i>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:10px;background:var(--color-surface)">
+          <div style="width:44px;height:56px;border-radius:3px;background:#cfd3e5;position:relative;flex:none"><div style="position:absolute;inset:5px;border:1px solid #9397ab"></div></div>
+          <div style="flex:1;min-width:0">
+            <div style="font:500 14px ui-monospace,Menlo,monospace;color:var(--color-neutral-400)">E-201</div>
+            <div style="font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-200);margin-top:3px">Lighting Plan &mdash; Level 1</div>
+            <div style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:5px">Rev 2 &middot; current &middot; offline</div>
+          </div>
+          <i class="ph ph-caret-right" style="font-size:16px;color:var(--color-neutral-600)"></i>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:10px;background:var(--color-surface);box-shadow:inset 0 0 0 1px var(--color-accent-800)">
+          <div style="width:44px;height:56px;border-radius:3px;background:#e4e7f5;position:relative;flex:none"><div style="position:absolute;inset:5px;border:1px solid #9397ab"></div></div>
+          <div style="flex:1;min-width:0">
+            <div style="font:500 14px ui-monospace,Menlo,monospace;color:var(--color-accent-300)">E-301</div>
+            <div style="font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-200);margin-top:3px">One-Line Diagram</div>
+            <div style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-accent-300);margin-top:5px">Rev 4 issued &middot; you have Rev 3</div>
+          </div>
+          <i class="ph ph-caret-right" style="font-size:16px;color:var(--color-neutral-600)"></i>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:10px;background:var(--color-surface)">
+          <div style="width:44px;height:56px;border-radius:3px;background:#cfd3e5;position:relative;flex:none"><div style="position:absolute;inset:5px;border:1px solid #9397ab"></div></div>
+          <div style="flex:1;min-width:0">
+            <div style="font:500 14px ui-monospace,Menlo,monospace;color:var(--color-neutral-400)">E-401</div>
+            <div style="font:400 13px Inter,system-ui,sans-serif;color:var(--color-neutral-200);margin-top:3px">Panel Schedules H1&ndash;H6</div>
+            <div style="font:400 11px Inter,system-ui,sans-serif;color:var(--color-neutral-600);margin-top:5px">Rev 1 &middot; current</div>
+          </div>
+          <i class="ph ph-caret-right" style="font-size:16px;color:var(--color-neutral-600)"></i>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-around;padding:12px 8px 26px;border-top:1px solid var(--color-divider);flex:none">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:56px;min-height:44px;justify-content:center;color:var(--color-accent)"><i class="ph-fill ph-blueprint" style="font-size:21px"></i><span style="font:500 10px Inter,system-ui,sans-serif">Sheets</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:56px;min-height:44px;justify-content:center;color:var(--color-neutral-500)"><i class="ph ph-pencil-simple" style="font-size:21px"></i><span style="font:400 10px Inter,system-ui,sans-serif">Markups</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:56px;min-height:44px;justify-content:center;color:var(--color-neutral-500)"><i class="ph ph-push-pin" style="font-size:21px"></i><span style="font:400 10px Inter,system-ui,sans-serif">Offline</span></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:5px;min-width:56px;min-height:44px;justify-content:center;color:var(--color-neutral-500)"><i class="ph ph-bell" style="font-size:21px"></i><span style="font:400 10px Inter,system-ui,sans-serif">Activity</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="max-width:640px;padding-top:8px;display:flex;flex-direction:column;gap:10px">
+    <div style="font:500 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600)">Open questions</div>
+    <p style="margin:0;font:400 14px/1.65 Inter,system-ui,sans-serif;color:var(--color-neutral-400);text-wrap:pretty">Does a rev need engineer approval before the field sees it, or does publishing make it current immediately? Should markups carry forward onto the new rev automatically, or stay pinned to the rev they were drawn on? And is there a Procore sync in scope, or is this the system of record?</p>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showRevAlert&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Behavior&quot;},&quot;showChangedAreas&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Behavior&quot;},&quot;compareMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;overlay&quot;,&quot;side&quot;],&quot;default&quot;:&quot;overlay&quot;,&quot;tsType&quot;:&quot;'overlay'|'side'&quot;,&quot;section&quot;:&quot;Behavior&quot;}}">
+class Component extends DCLogic {
+  state = { pos: 54, mode: null };
+
+  setMode(m) { this.setState({ mode: m }); }
+
+  startDrag = (e) => {
+    const el = this.wrap;
+    if (!el) return;
+    const move = (ev) => {
+      const r = el.getBoundingClientRect();
+      const p = Math.min(96, Math.max(4, ((ev.clientX - r.left) / r.width) * 100));
+      this.setState({ pos: p });
+    };
+    move(e);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  renderVals() {
+    const mode = this.state.mode ?? (this.props.compareMode ?? 'overlay');
+    return {
+      pos: this.state.pos,
+      clip: 100 - this.state.pos,
+      isOverlay: mode === 'overlay',
+      isSide: mode === 'side',
+      setOverlay: () => this.setMode('overlay'),
+      setSide: () => this.setMode('side'),
+      onDrag: this.startDrag,
+      wrapRef: (n) => { this.wrap = n; },
+      showRevAlert: this.props.showRevAlert ?? true,
+      showChangedAreas: this.props.showChangedAreas ?? true
+    };
+  }
+}
+</script>
+</body>
+</html>
