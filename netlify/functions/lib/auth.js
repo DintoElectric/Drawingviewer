@@ -17,7 +17,7 @@ const STORE = "drawings-hub";
 
 function store(event) {
   connectLambda(event);
-  return getStore({ name: STORE, consistency: "strong" });
+  return getStore(STORE);
 }
 
 // Pull the authenticated Identity user, or null.
