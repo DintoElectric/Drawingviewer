@@ -8,8 +8,6 @@ let manifest = null;
 const items = [];
 let nextId = 1;
 
-// same character rule the server enforces (safeSheet), so we never send a value
-// that would 400 on publish.
 const SHEET_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/;
 
 const backHref = `./project.html?project=${encodeURIComponent(projectId)}`;
@@ -22,8 +20,6 @@ function b64(buf) {
   return btoa(bin);
 }
 
-// Best-effort sheet number from the file name, for scans the reader can't read.
-// e.g. "Yale_OML-BRANCH-E35_02A[2].pdf" -> "E35-02A"
 function guessSheetFromName(name) {
   let s = String(name || "").replace(/\.pdf$/i, "").replace(/\[[^\]]*\]$/, "").trim();
   s = s.replace(/[_\s]+/g, "-");
@@ -34,22 +30,25 @@ function guessSheetFromName(name) {
 
 async function readFile(file) {
   const buf = await file.arrayBuffer();
-  let detected = null, autoTitle = null;
+  // Encode the file bytes FIRST — the PDF reader below detaches the buffer it's
+  // given, so anything computed from `buf` after that would come back empty.
+  const base64 = b64(buf);
+  let detected = null, autoTitle = null, thumb = null;
   try {
-    const { items: tItems } = await itemsFromArrayBuffer(buf);
+    // hand the reader its own copy so it can't empty our buffer
+    const { items: tItems } = await itemsFromArrayBuffer(buf.slice(0));
     const sn = pickSheetNumber(tItems);
     detected = sn.sheet;
     autoTitle = pickTitle(tItems, sn.sheet);
   } catch {}
-  const manualSheet = detected || guessSheetFromName(file.name) || "";
-  let thumb = null; try { thumb = await thumbnailFromArrayBuffer(buf); } catch {}
+  try { thumb = await thumbnailFromArrayBuffer(buf.slice(0)); } catch {}
   return {
-    id: nextId++, filename: file.name, base64: b64(buf), thumb,
-    detected, autoTitle, manualSheet,
+    id: nextId++, filename: file.name, base64, thumb,
+    detected, autoTitle, manualSheet: detected || guessSheetFromName(file.name) || "",
+    readOk: !!base64,
   };
 }
 
-// The plan a row will publish with, driven by the sheet-number box.
 function effectivePlan(row) {
   const manual = (row.manualSheet || "").trim().toUpperCase();
   if (!manual) return { status: "empty", sheet: null };
@@ -58,6 +57,8 @@ function effectivePlan(row) {
 }
 
 function planLine(row, p) {
+  if (!row.readOk)
+    return `<span style="color:var(--color-accent-200)">Couldn't read this file — remove it and add it again</span>`;
   if (p.status === "supersede")
     return `<span class="tag tag-accent" style="font-size:10px;padding:2px 8px"><i class="ph-fill ph-arrow-circle-up"></i>Rev ${p.newRev} supersedes Rev ${p.supersedes}</span>`;
   if (p.status === "new")
@@ -67,14 +68,19 @@ function planLine(row, p) {
   return `<span style="color:var(--color-accent-200)"><i class="ph ph-arrow-left" style="font-size:12px"></i> Enter a sheet number</span>`;
 }
 
-function statusIcon(p) {
-  const ok = p.status === "new" || p.status === "supersede";
-  return ok ? `<i class="ph-fill ph-check-circle ok"></i>` : `<i class="ph ph-warning-circle" style="font-size:19px;color:var(--color-accent-400)"></i>`;
+function rowResolved(row) {
+  if (!row.readOk) return false;
+  const s = effectivePlan(row).status;
+  return s === "new" || s === "supersede";
+}
+
+function statusIcon(row, p) {
+  return rowResolved(row) ? `<i class="ph-fill ph-check-circle ok"></i>` : `<i class="ph ph-warning-circle" style="font-size:19px;color:var(--color-accent-400)"></i>`;
 }
 
 function rowHtml(row) {
   const p = effectivePlan(row);
-  const needs = !(p.status === "new" || p.status === "supersede");
+  const needs = !rowResolved(row);
   return `<div class="matchrow ${needs ? "needs" : ""}" data-row="${row.id}">
     ${row.thumb ? `<img class="thumb" src="${row.thumb}" alt="">` : `<i class="ph-fill ph-file-pdf" style="font-size:21px;color:var(--color-neutral-500)"></i>`}
     <div class="mr-main">
@@ -85,7 +91,7 @@ function rowHtml(row) {
       <input class="input sheet-input" data-sheet="${row.id}" list="sheetlist" placeholder="Sheet #"
              autocapitalize="characters" spellcheck="false"
              value="${row.manualSheet.replace(/"/g, "&quot;")}" style="width:130px;text-transform:uppercase">
-      <span class="mr-status">${statusIcon(p)}</span>
+      <span class="mr-status">${statusIcon(row, p)}</span>
     </div>
   </div>`;
 }
@@ -98,23 +104,19 @@ function renderRows() {
   updatePublish();
 }
 
-// Patch only the changed row so typing never loses focus.
 function updateRow(id, inp) {
   const row = items.find((r) => r.id === id);
   if (!row) return;
   row.manualSheet = inp.value;
   const el = document.querySelector(`[data-row="${id}"]`);
   const p = effectivePlan(row);
-  const needs = !(p.status === "new" || p.status === "supersede");
-  el.classList.toggle("needs", needs);
+  el.classList.toggle("needs", !rowResolved(row));
   el.querySelector(".mr-plan").innerHTML = planLine(row, p);
-  el.querySelector(".mr-status").innerHTML = statusIcon(p);
+  el.querySelector(".mr-status").innerHTML = statusIcon(row, p);
   updatePublish();
 }
 
-function unresolved() {
-  return items.filter((row) => { const s = effectivePlan(row).status; return s !== "new" && s !== "supersede"; });
-}
+function unresolved() { return items.filter((row) => !rowResolved(row)); }
 
 function updatePublish() {
   const btn = document.getElementById("publishBtn"), hint = document.getElementById("publishHint"), label = document.getElementById("publishLabel");
@@ -135,7 +137,7 @@ async function ingestFiles(fileList) {
   document.getElementById("dzTitle").textContent = `Reading ${pdfs.length} file${pdfs.length > 1 ? "s" : ""}…`;
   for (const f of pdfs) {
     try { items.push(await readFile(f)); }
-    catch { items.push({ id: nextId++, filename: f.name, base64: null, thumb: null, detected: null, autoTitle: null, manualSheet: guessSheetFromName(f.name) }); }
+    catch { items.push({ id: nextId++, filename: f.name, base64: "", thumb: null, detected: null, autoTitle: null, manualSheet: guessSheetFromName(f.name), readOk: false }); }
     renderRows();
   }
   const prefilled = items.filter((r) => (r.manualSheet || "").trim()).length;
@@ -146,25 +148,38 @@ async function ingestFiles(fileList) {
 }
 
 async function publish() {
-  const btn = document.getElementById("publishBtn");
-  btn.disabled = true; document.getElementById("publishLabel").textContent = "Publishing…";
-  const payload = {
-    project: projectId,
+  const btn = document.getElementById("publishBtn"), label = document.getElementById("publishLabel");
+  btn.disabled = true;
+  const rows = items.slice();
+  const meta = {
     reason: document.getElementById("reason").value,
     issueDate: document.getElementById("issueDate").value || null,
     note: document.getElementById("note").value || null,
-    files: items.map((row) => {
-      const p = effectivePlan(row);
-      return { sheet: p.sheet, newRev: p.newRev, status: p.status, title: row.autoTitle || null, base64: row.base64 };
-    }),
   };
-  try {
-    const out = await api("publish-revisions", { method: "POST", body: payload });
-    toast("Published", `${out.published.length} revision${out.published.length > 1 ? "s" : ""} saved.`, false);
+  let done = 0; const failed = [];
+  // one request per file — keeps every request small and avoids racing the manifest
+  for (const row of rows) {
+    const p = effectivePlan(row);
+    label.textContent = `Publishing ${done + 1} of ${rows.length}…`;
+    try {
+      await api("publish-revisions", {
+        method: "POST",
+        body: {
+          project: projectId, reason: meta.reason, issueDate: meta.issueDate, note: meta.note,
+          files: [{ sheet: p.sheet, newRev: p.newRev, status: p.status, title: row.autoTitle || null, base64: row.base64 }],
+        },
+      });
+      done++;
+    } catch (e) {
+      failed.push(`${row.filename} (${e.message})`);
+    }
+  }
+  if (!failed.length) {
+    toast("Published", `${done} revision${done > 1 ? "s" : ""} saved.`, false);
     setTimeout(() => (location.href = backHref), 1200);
-  } catch (e) {
-    toast("Couldn't publish", e.message, true);
-    document.getElementById("publishLabel").textContent = `Publish ${items.length} revisions`;
+  } else {
+    toast(`Published ${done} of ${rows.length}`, `Couldn't publish: ${failed.join("; ")}`, true);
+    label.textContent = `Publish ${items.length} revisions`;
     btn.disabled = false;
   }
 }
@@ -177,7 +192,6 @@ async function main() {
     return;
   }
   manifest = await api(`get-manifest?project=${encodeURIComponent(projectId)}`);
-  // datalist of existing sheet numbers, so superseding is a pick-or-type
   const existing = Object.keys(manifest.drawings || {}).sort();
   document.getElementById("sheetlist").innerHTML = existing.map((s) => `<option value="${s}">`).join("");
   document.getElementById("projSub").textContent = `${manifest.project?.name || projectId} — type or confirm the sheet number on each file`;
