@@ -9,15 +9,22 @@ const items = [];
 let nextId = 1;
 
 const SHEET_RE = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/;
+const CHUNK = 3 * 1024 * 1024; // 3 MB raw per chunk (~4 MB as base64, under the 6 MB request limit)
 
 const backHref = `./project.html?project=${encodeURIComponent(projectId)}`;
 document.getElementById("closeBtn").href = backHref;
 document.getElementById("cancelBtn").href = backHref;
 
-function b64(buf) {
-  let bin = ""; const bytes = new Uint8Array(buf); const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+// base64-encode a Uint8Array (or a subarray view of one)
+function b64(bytes) {
+  let bin = ""; const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
   return btoa(bin);
+}
+
+function newUploadId() {
+  const raw = (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  return raw.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 40);
 }
 
 function guessSheetFromName(name) {
@@ -30,22 +37,19 @@ function guessSheetFromName(name) {
 
 async function readFile(file) {
   const buf = await file.arrayBuffer();
-  // Encode the file bytes FIRST — the PDF reader below detaches the buffer it's
-  // given, so anything computed from `buf` after that would come back empty.
-  const base64 = b64(buf);
   let detected = null, autoTitle = null, thumb = null;
   try {
-    // hand the reader its own copy so it can't empty our buffer
-    const { items: tItems } = await itemsFromArrayBuffer(buf.slice(0));
+    const { items: tItems } = await itemsFromArrayBuffer(buf.slice(0)); // copy — reader detaches its buffer
     const sn = pickSheetNumber(tItems);
     detected = sn.sheet;
     autoTitle = pickTitle(tItems, sn.sheet);
   } catch {}
   try { thumb = await thumbnailFromArrayBuffer(buf.slice(0)); } catch {}
+  // keep the File itself; the bytes are re-read at publish time and streamed up in chunks
   return {
-    id: nextId++, filename: file.name, base64, thumb,
+    id: nextId++, filename: file.name, file, thumb,
     detected, autoTitle, manualSheet: detected || guessSheetFromName(file.name) || "",
-    readOk: !!base64,
+    readOk: file.size > 0,
   };
 }
 
@@ -74,7 +78,7 @@ function rowResolved(row) {
   return s === "new" || s === "supersede";
 }
 
-function statusIcon(row, p) {
+function statusIcon(row) {
   return rowResolved(row) ? `<i class="ph-fill ph-check-circle ok"></i>` : `<i class="ph ph-warning-circle" style="font-size:19px;color:var(--color-accent-400)"></i>`;
 }
 
@@ -91,7 +95,7 @@ function rowHtml(row) {
       <input class="input sheet-input" data-sheet="${row.id}" list="sheetlist" placeholder="Sheet #"
              autocapitalize="characters" spellcheck="false"
              value="${row.manualSheet.replace(/"/g, "&quot;")}" style="width:130px;text-transform:uppercase">
-      <span class="mr-status">${statusIcon(row, p)}</span>
+      <span class="mr-status">${statusIcon(row)}</span>
     </div>
   </div>`;
 }
@@ -112,7 +116,7 @@ function updateRow(id, inp) {
   const p = effectivePlan(row);
   el.classList.toggle("needs", !rowResolved(row));
   el.querySelector(".mr-plan").innerHTML = planLine(row, p);
-  el.querySelector(".mr-status").innerHTML = statusIcon(row, p);
+  el.querySelector(".mr-status").innerHTML = statusIcon(row);
   updatePublish();
 }
 
@@ -137,7 +141,7 @@ async function ingestFiles(fileList) {
   document.getElementById("dzTitle").textContent = `Reading ${pdfs.length} file${pdfs.length > 1 ? "s" : ""}…`;
   for (const f of pdfs) {
     try { items.push(await readFile(f)); }
-    catch { items.push({ id: nextId++, filename: f.name, base64: "", thumb: null, detected: null, autoTitle: null, manualSheet: guessSheetFromName(f.name), readOk: false }); }
+    catch { items.push({ id: nextId++, filename: f.name, file: null, thumb: null, detected: null, autoTitle: null, manualSheet: guessSheetFromName(f.name), readOk: false }); }
     renderRows();
   }
   const prefilled = items.filter((r) => (r.manualSheet || "").trim()).length;
@@ -145,6 +149,21 @@ async function ingestFiles(fileList) {
   document.getElementById("dzSub").textContent = prefilled
     ? `${prefilled} got a sheet number automatically — confirm each one, fix any blanks, then publish.`
     : `Type the sheet number for each, then publish.`;
+}
+
+// upload one file's bytes to Blobs in chunks, then return its uploadId + count
+async function uploadInChunks(row, label, fileNo, fileCount) {
+  const buf = await row.file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  if (!bytes.length) throw new Error("empty file");
+  const total = Math.max(1, Math.ceil(bytes.length / CHUNK));
+  const uploadId = newUploadId();
+  for (let i = 0; i < total; i++) {
+    label.textContent = `Uploading ${fileNo} of ${fileCount}${total > 1 ? ` · part ${i + 1} of ${total}` : ""}…`;
+    const slice = bytes.subarray(i * CHUNK, (i + 1) * CHUNK);
+    await api("upload-chunk", { method: "POST", body: { project: projectId, uploadId, index: i, total, dataB64: b64(slice) } });
+  }
+  return { uploadId, chunks: total };
 }
 
 async function publish() {
@@ -157,16 +176,16 @@ async function publish() {
     note: document.getElementById("note").value || null,
   };
   let done = 0; const failed = [];
-  // one request per file — keeps every request small and avoids racing the manifest
   for (const row of rows) {
     const p = effectivePlan(row);
-    label.textContent = `Publishing ${done + 1} of ${rows.length}…`;
     try {
+      const { uploadId, chunks } = await uploadInChunks(row, label, done + 1, rows.length);
+      label.textContent = `Saving ${done + 1} of ${rows.length}…`;
       await api("publish-revisions", {
         method: "POST",
         body: {
           project: projectId, reason: meta.reason, issueDate: meta.issueDate, note: meta.note,
-          files: [{ sheet: p.sheet, newRev: p.newRev, status: p.status, title: row.autoTitle || null, base64: row.base64 }],
+          files: [{ sheet: p.sheet, newRev: p.newRev, status: p.status, title: row.autoTitle || null, uploadId, chunks }],
         },
       });
       done++;
