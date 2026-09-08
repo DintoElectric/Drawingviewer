@@ -14,13 +14,21 @@ async function showRev(rev) {
   const empty = document.getElementById("empty");
   const dl = document.getElementById("downloadBtn");
   const archive = rev === entry.currentRev ? "0" : "1";
-  const q = `get-drawing?project=${encodeURIComponent(projectId)}&sheet=${encodeURIComponent(sheetId)}&rev=${rev}&archive=${archive}`;
+  const base = `get-drawing?project=${encodeURIComponent(projectId)}&sheet=${encodeURIComponent(sheetId)}&rev=${rev}&archive=${archive}`;
 
   document.getElementById("revpick").innerHTML =
     `Rev ${rev}${rev === entry.currentRev ? " · current" : ""} <i class="ph ph-caret-down" style="font-size:12px"></i>`;
+  empty.classList.remove("hidden");
+  empty.innerHTML = `<div class="muted">Loading…</div>`;
+  frame.classList.add("hidden");
+  dl.classList.add("hidden");
 
   try {
-    const blob = await apiBlob(q);
+    // large sheets come back in pieces; stitch them into one PDF blob
+    const meta = await api(`${base}&meta=1`);
+    const parts = [];
+    for (let i = 0; i < meta.chunks; i++) parts.push(await apiBlob(`${base}&chunk=${i}`));
+    const blob = new Blob(parts, { type: "application/pdf" });
     if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
     currentObjectUrl = URL.createObjectURL(blob);
     frame.src = currentObjectUrl;
