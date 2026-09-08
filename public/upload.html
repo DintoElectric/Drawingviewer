@@ -10,63 +10,44 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./app.css">
+<script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
 </head>
 <body>
   <div class="backdrop">
     <div class="modal">
       <div class="m-head">
-        <div>
-          <div class="m-title">Add revisions</div>
-          <div class="m-sub" id="projSub">Drop drawings — sheet numbers are read from each title block</div>
-        </div>
+        <div><div class="m-title">Add revisions</div><div class="m-sub" id="projSub">Sheet numbers are read from each title block</div></div>
         <div class="spacer"></div>
-        <a class="btn btn-icon btn-secondary" href="./index.html" title="Close"><i class="ph ph-x" style="font-size:16px"></i></a>
+        <a class="btn btn-icon btn-secondary" id="closeBtn" title="Close"><i class="ph ph-x" style="font-size:16px"></i></a>
       </div>
-
       <div class="m-body">
         <label class="dropzone" id="dropzone" for="fileInput">
           <i class="ph ph-file-arrow-up" style="font-size:26px;color:var(--color-accent-400)"></i>
           <div>
             <div class="dz-title" id="dzTitle">Drop PDF drawings here, or choose files</div>
-            <div class="dz-sub" id="dzSub">Each file's sheet number is pulled from its title block — the file name doesn't matter.</div>
+            <div class="dz-sub" id="dzSub">Each file's sheet number comes from its title block — the file name doesn't matter.</div>
           </div>
           <div class="spacer"></div>
           <span class="btn btn-secondary" style="min-height:34px"><i class="ph ph-plus"></i>Add files</span>
           <input id="fileInput" type="file" accept="application/pdf" multiple class="hidden">
         </label>
-
         <div id="rows"></div>
       </div>
-
       <div class="footer-fields">
-        <div class="field" style="flex:1 1 200px">
-          <label>Reason for issue</label>
-          <select class="input" id="reason">
-            <option>Revised for construction</option>
-            <option>ASI or bulletin</option>
-            <option>RFI response</option>
-            <option>Permit comments</option>
-          </select>
+        <div class="field" style="flex:1 1 200px"><label>Reason for issue</label>
+          <select class="input" id="reason"><option>Revised for construction</option><option>ASI or bulletin</option><option>RFI response</option><option>Permit comments</option></select>
         </div>
-        <div class="field" style="flex:0 0 150px">
-          <label>Issue date</label>
-          <input class="input" id="issueDate" type="date">
-        </div>
-        <div class="field" style="flex:2 1 240px">
-          <label>Note to the field (optional)</label>
-          <input class="input" id="note" placeholder="e.g. feeder to H4 upsized to 4in, reroute above ceiling">
-        </div>
+        <div class="field" style="flex:0 0 150px"><label>Issue date</label><input class="input" id="issueDate" type="date"></div>
+        <div class="field" style="flex:2 1 240px"><label>Note to the field (optional)</label><input class="input" id="note" placeholder="e.g. feeder to H4 upsized to 4in"></div>
       </div>
-
       <div class="m-actions">
         <span class="muted" id="publishHint" style="font-size:12px"></span>
         <div class="spacer"></div>
-        <a class="btn btn-secondary" href="./index.html" style="min-height:38px">Cancel</a>
+        <a class="btn btn-secondary" id="cancelBtn" style="min-height:38px">Cancel</a>
         <button class="btn btn-primary" id="publishBtn" style="min-height:38px" disabled><i class="ph ph-check"></i><span id="publishLabel">Publish revisions</span></button>
       </div>
     </div>
   </div>
-
   <script type="module" src="./js/upload-page.js"></script>
 </body>
 </html>
