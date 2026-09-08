@@ -25,7 +25,7 @@
           <i class="ph ph-file-arrow-up" style="font-size:26px;color:var(--color-accent-400)"></i>
           <div>
             <div class="dz-title" id="dzTitle">Drop PDF drawings here, or choose files</div>
-            <div class="dz-sub" id="dzSub">Each file's sheet number comes from its title block — the file name doesn't matter.</div>
+            <div class="dz-sub" id="dzSub">The hub reads the sheet number from each title block. For scans, type it in — the box is pre-filled from the file name where it can be.</div>
           </div>
           <div class="spacer"></div>
           <span class="btn btn-secondary" style="min-height:34px"><i class="ph ph-plus"></i>Add files</span>
@@ -35,7 +35,13 @@
       </div>
       <div class="footer-fields">
         <div class="field" style="flex:1 1 200px"><label>Reason for issue</label>
-          <select class="input" id="reason"><option>Revised for construction</option><option>ASI or bulletin</option><option>RFI response</option><option>Permit comments</option></select>
+          <select class="input" id="reason">
+            <option>Revised for construction</option>
+            <option>As-Built</option>
+            <option>ASI or bulletin</option>
+            <option>RFI response</option>
+            <option>Permit comments</option>
+          </select>
         </div>
         <div class="field" style="flex:0 0 150px"><label>Issue date</label><input class="input" id="issueDate" type="date"></div>
         <div class="field" style="flex:2 1 240px"><label>Note to the field (optional)</label><input class="input" id="note" placeholder="e.g. feeder to H4 upsized to 4in"></div>
@@ -48,6 +54,10 @@
       </div>
     </div>
   </div>
+
+  <!-- existing sheet numbers, for supersede autocomplete on the Sheet # box -->
+  <datalist id="sheetlist"></datalist>
+
   <script type="module" src="./js/upload-page.js"></script>
 </body>
 </html>
