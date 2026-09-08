@@ -1,13 +1,11 @@
 {
   "name": "dinto-drawings-hub",
-  "version": "1.0.0",
-  "description": "Drawing revision-control hub for Paul Dinto Electrical — uploads name and version sheets from their own title blocks.",
-  "type": "module",
+  "version": "2.0.0",
+  "description": "Multi-project drawing revision hub for Paul Dinto Electrical, with login and admin-only uploads. Sheets are named and versioned from their own title blocks.",
   "scripts": {
-    "ingest": "node scripts/ingest.mjs",
-    "serve": "npx --yes serve public"
+    "dev": "netlify dev"
   },
   "dependencies": {
-    "pdfjs-dist": "4.0.379"
+    "@netlify/blobs": "^8.1.0"
   }
 }
