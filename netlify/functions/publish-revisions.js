@@ -1,22 +1,8 @@
-// POST /publish-revisions — ADMIN ONLY. The server half of the upload flow.
-//
-// The browser reads each PDF's title block (extract-core.js), shows the match,
-// and sends the confirmed revisions here with the PDF as base64. This function:
-//   - re-validates the sheet number server-side and builds the storage key
-//     itself (never trusts a client-supplied path — closes path traversal),
-//   - archives the file each rev supersedes,
-//   - writes the new file,
-//   - updates the project manifest.
-//
-// Storage is Netlify Blobs, so there's no git commit and no rebuild — the change
-// is live on the next read.
-const {
-  store, requireAdmin, readJSON, writeJSON, keys,
-  safeProjectId, safeSheet, safeRev, json, fail, httpError,
-} = require("./lib/auth");
-
-const SHEET_OK = /^[A-Z0-9][A-Z0-9.\-]{0,31}$/;
-
+// POST /publish-revisions — ADMIN ONLY. Each file references an uploadId + chunk
+// count (previously sent to /upload-chunk). This reads the chunks from Blobs,
+// concatenates them into the finished PDF, archives any superseded rev, writes
+// the new file, updates the manifest, and clears the temp chunks.
+const { store, requireAdmin, readJSON, writeJSON, keys, safeProjectId, safeSheet, safeRev, safeUploadId, json, fail, httpError } = require("./lib/auth");
 exports.handler = async (event, context) => {
   try {
     requireAdmin(context);
@@ -24,13 +10,12 @@ exports.handler = async (event, context) => {
     const body = JSON.parse(event.body || "{}");
     const pid = safeProjectId(body.project);
     const st = store(event);
-
     const manifest = await readJSON(st, keys.manifest(pid), null);
     if (!manifest) throw httpError(404, "Project not found.");
     manifest.drawings = manifest.drawings || {};
 
     const files = Array.isArray(body.files) ? body.files : [];
-    const publishable = files.filter((f) => f && f.base64 && f.sheet && f.status !== "new-manual");
+    const publishable = files.filter((f) => f && f.sheet && f.uploadId && f.chunks && f.status !== "new-manual");
     if (!publishable.length) throw httpError(400, "Nothing to publish (each file needs a resolved sheet).");
 
     const issueDate = (body.issueDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
@@ -39,19 +24,26 @@ exports.handler = async (event, context) => {
     const summary = [];
 
     for (const f of publishable) {
-      const sheet = safeSheet(f.sheet);          // server re-validates
-      if (!SHEET_OK.test(sheet)) throw httpError(400, `Bad sheet: ${f.sheet}`);
+      const sheet = safeSheet(f.sheet);
+      const uploadId = safeUploadId(f.uploadId);
+      const chunks = parseInt(f.chunks, 10);
+      if (!Number.isInteger(chunks) || chunks < 1 || chunks > 4096) throw httpError(400, "Bad chunk count.");
+
+      // reassemble the file from its temp chunks
+      const parts = [];
+      for (let i = 0; i < chunks; i++) {
+        const part = await st.get(keys.tmpChunk(pid, uploadId, i), { type: "arrayBuffer" });
+        if (!part) throw httpError(400, `Missing chunk ${i} for ${sheet} — re-upload this file.`);
+        parts.push(Buffer.from(part));
+      }
+      const bytes = Buffer.concat(parts);
+
       const entry = manifest.drawings[sheet] || { title: f.title || sheet, history: [] };
       const cur = entry.currentRev || 0;
-
-      // decide the new rev the same way extract-core does: printed rev if it
-      // advances, else increment. The client sends its computed newRev; trust it
-      // only if it advances past current, otherwise recompute.
       let newRev = parseInt(f.newRev, 10);
       if (!Number.isInteger(newRev) || newRev <= cur) newRev = cur + 1;
       newRev = safeRev(newRev);
 
-      // archive the superseded current file (copy to archive, delete current)
       if (cur > 0 && entry.currentRev) {
         const oldBuf = await st.get(keys.file(pid, sheet, entry.currentRev), { type: "arrayBuffer" }).catch(() => null);
         if (oldBuf) {
@@ -62,11 +54,8 @@ exports.handler = async (event, context) => {
         }
       }
 
-      // write the new file from base64
-      const bytes = Buffer.from(f.base64, "base64");
       await st.set(keys.file(pid, sheet, newRev), bytes);
 
-      // update manifest entry
       entry.title = f.title || entry.title || sheet;
       entry.currentRev = newRev;
       entry.currentFile = `files/${sheet}_Rev${newRev}.pdf`;
@@ -78,12 +67,14 @@ exports.handler = async (event, context) => {
       entry.history.sort((a, b) => a.rev - b.rev);
       manifest.drawings[sheet] = entry;
       summary.push(`${sheet} → Rev ${newRev}`);
+
+      // clear temp chunks
+      for (let i = 0; i < chunks; i++) { await st.delete(keys.tmpChunk(pid, uploadId, i)).catch(() => {}); }
     }
 
     manifest.project = manifest.project || {};
     manifest.project.syncedAt = new Date().toISOString();
     await writeJSON(st, keys.manifest(pid), manifest);
-
     return json(200, { ok: true, published: summary });
   } catch (e) { return fail(e); }
 };
