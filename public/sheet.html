@@ -10,18 +10,19 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./app.css">
+<script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
 </head>
 <body>
   <div class="viewer-header">
-    <a class="btn btn-icon btn-secondary" href="./index.html" title="Back"><i class="ph ph-arrow-left" style="font-size:16px"></i></a>
+    <a class="btn btn-icon btn-secondary" id="back" title="Back"><i class="ph ph-arrow-left" style="font-size:16px"></i></a>
     <span class="snum" id="snum">—</span>
     <span id="stitle" style="font:500 15px var(--font-heading)"></span>
     <button class="revpick" id="revpick">Rev — <i class="ph ph-caret-down" style="font-size:12px"></i></button>
     <div class="spacer"></div>
-    <a class="btn btn-secondary" id="downloadBtn" style="min-height:36px" download><i class="ph ph-download-simple"></i>Download</a>
+    <a class="btn btn-secondary" id="downloadBtn" style="min-height:36px" target="_blank"><i class="ph ph-download-simple"></i>Download</a>
   </div>
 
-  <div class="shell" style="min-height:calc(100vh - 56px)">
+  <div class="vshell">
     <div class="canvas">
       <iframe id="pdf" title="Sheet"></iframe>
       <div class="empty hidden" id="empty"></div>
