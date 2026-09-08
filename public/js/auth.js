@@ -7,10 +7,10 @@ const identity = window.netlifyIdentity;
 
 let readyResolve;
 const ready = new Promise((r) => (readyResolve = r));
+let started = false;
 
 identity.on("init", (user) => readyResolve(user));
-identity.on("login", () => { identity.close(); location.reload(); });
-identity.on("logout", () => location.reload());
+identity.on("logout", () => { location.href = "/"; });
 identity.init();
 
 export function currentUser() { return identity.currentUser(); }
@@ -25,11 +25,22 @@ export function signup() { identity.open("signup"); }
 export function logout() { identity.logout(); }
 
 // Block the page until someone is signed in. Shows a full-page gate with
-// Sign in / Create account, and only calls `then` once we have a user.
+// Sign in / Create account, and runs `then` exactly once — WITHOUT reloading.
+// (Reloading on login + the token the widget leaves in the URL created an
+// infinite reload loop, which is what tripped Netlify's 429 rate limit.)
 export async function requireLogin(then) {
   await ready;
-  const user = identity.currentUser();
-  if (user) { hideGate(); then(user); return; }
+  const proceed = () => {
+    if (started) return;
+    started = true;
+    // Strip any #access_token=... the widget appended, so nothing can
+    // re-trigger a login event later.
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    hideGate();
+    then(identity.currentUser());
+  };
+  if (identity.currentUser()) { proceed(); return; }
+  identity.on("login", () => { identity.close(); proceed(); });
   showGate();
 }
 
