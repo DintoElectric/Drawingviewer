@@ -14,9 +14,13 @@
 //
 // Files are stored as CHUNK_BYTES pieces (no stitching on the server), so big
 // scans never sit whole in a function's memory and every request stays small.
+//
+// NOTE: this uses the app's normal store(event). Netlify Blobs "strong"
+// consistency is not available to functions in this setup, so reads can lag a
+// moment behind writes. Every read that depends on a just-written value
+// therefore retries briefly (see waitEntry / allPresent).
 const crypto = require("crypto");
-const { connectLambda, getStore } = require("@netlify/blobs");
-const { requireUser, readJSON, writeJSON, json, fail, httpError, safeIndex } = require("./lib/auth");
+const { store, requireUser, readJSON, writeJSON, json, fail, httpError, safeIndex } = require("./lib/auth");
 
 /* ---- limits: change these numbers to change the rules ---------------- */
 const MAX_COMPARISONS = 12;                  // saved comparisons per person
@@ -29,14 +33,9 @@ const MB = 1024 * 1024;
 const CATS = ["Changed", "Added", "Removed", "Question", "Other"];
 const ID_RE = /^[a-z0-9]{8,32}$/;
 
-/* ---- store + keys ---------------------------------------------------- */
-// Same store as the rest of the app, but with strong consistency so a list
-// right after a save always shows the save.
-function strongStore(event) {
-  connectLambda(event);
-  return getStore({ name: "drawings-hub", consistency: "strong" });
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* ---- keys ------------------------------------------------------------- */
 // Each person's private folder is a hash of their Identity user id.
 function userKey(user) {
   const id = String(user.sub || user.email || "").trim().toLowerCase();
@@ -46,7 +45,6 @@ function userKey(user) {
 
 const K = {
   index: (u) => `compare/${u}/index.json`,
-  base: (u, id) => `compare/${u}/${id}`,
   state: (u, id) => `compare/${u}/${id}/state.json`,
   chunk: (u, id, w, i) => `compare/${u}/${id}/${w}/${i}`,
 };
@@ -127,10 +125,32 @@ const saveIndex = (st, u, idx) => writeJSON(st, K.index(u), idx);
 const usedBytes = (idx) => idx.items.reduce((s, e) => s + (e.A?.size || 0) + (e.B?.size || 0), 0);
 const limits = () => ({ maxComparisons: MAX_COMPARISONS, maxTotalBytes: MAX_TOTAL_BYTES, maxFileBytes: MAX_FILE_BYTES, chunkBytes: CHUNK_BYTES });
 
-async function deleteAll(st, prefix) {
-  const { blobs } = await st.list({ prefix });
-  for (let i = 0; i < blobs.length; i += 8) {
-    await Promise.all(blobs.slice(i, i + 8).map((b) => st.delete(b.key)));
+// Finds one entry in the person's index. Because reads can lag a moment behind
+// writes, a missing (or not-yet-updated) entry is re-checked a few times.
+async function waitEntry(st, u, id, status) {
+  let idx, seen = null;
+  for (let i = 0; i < 5; i++) {
+    idx = await loadIndex(st, u);
+    const e = idx.items.find((x) => x.id === id);
+    if (e) {
+      if (!status || e.status === status) return { idx, e };
+      seen = e;
+    }
+    if (i < 4) await sleep(600);
+  }
+  if (seen) throw httpError(409, status === "ready" ? "That comparison isn't finished saving." : "That upload is already complete.");
+  throw httpError(404, "That saved comparison wasn't found.");
+}
+
+// Deletes by explicit key (never by listing), so nothing is missed or left behind.
+async function deleteEntryFiles(st, u, e) {
+  const list = [K.state(u, e.id)];
+  for (const w of ["A", "B"]) {
+    const n = (e[w] && e[w].chunks) || 0;
+    for (let i = 0; i < n; i++) list.push(K.chunk(u, e.id, w, i));
+  }
+  for (let i = 0; i < list.length; i += 8) {
+    await Promise.all(list.slice(i, i + 8).map((k) => st.delete(k)));
   }
 }
 
@@ -139,16 +159,31 @@ async function purgeStale(st, u, idx) {
   const now = Date.now();
   const stale = idx.items.filter((e) => e.status === "uploading" && now - e.started > STALE_MS);
   if (!stale.length) return false;
-  for (const e of stale) await deleteAll(st, K.base(u, e.id) + "/");
+  for (const e of stale) await deleteEntryFiles(st, u, e);
   idx.items = idx.items.filter((e) => !stale.includes(e));
   return true;
 }
 
-function findEntry(idx, id, status) {
-  const e = idx.items.find((x) => x.id === id);
-  if (!e) throw httpError(404, "That saved comparison wasn't found.");
-  if (status && e.status !== status) throw httpError(409, status === "ready" ? "That comparison isn't finished saving." : "That upload is already complete.");
-  return e;
+async function hasBlob(st, key) {
+  if (typeof st.getMetadata === "function") return !!(await st.getMetadata(key));
+  return (await st.get(key, { type: "arrayBuffer" })) != null;
+}
+
+// Confirms every uploaded piece is there, re-checking missing ones for a few seconds.
+async function allPresent(st, u, id, e) {
+  let missing = [];
+  for (const w of ["A", "B"]) for (let i = 0; i < e[w].chunks; i++) missing.push([w, i]);
+  for (let attempt = 0; attempt < 6 && missing.length; attempt++) {
+    if (attempt) await sleep(700);
+    const still = [];
+    for (let i = 0; i < missing.length; i += 8) {
+      const batch = missing.slice(i, i + 8);
+      const res = await Promise.all(batch.map(([w, n]) => hasBlob(st, K.chunk(u, id, w, n))));
+      batch.forEach((m, j) => { if (!res[j]) still.push(m); });
+    }
+    missing = still;
+  }
+  return missing.length === 0;
 }
 
 /* ---- actions --------------------------------------------------------- */
@@ -161,19 +196,17 @@ async function actList(st, u) {
 
 async function actGet(st, u, q) {
   const id = safeId(q.id);
-  const idx = await loadIndex(st, u);
-  const item = findEntry(idx, id, "ready");
+  const { e } = await waitEntry(st, u, id, "ready");
   const state = await readJSON(st, K.state(u, id), null);
-  return json(200, { item, state, chunkBytes: CHUNK_BYTES });
+  return json(200, { item: e, state, chunkBytes: CHUNK_BYTES });
 }
 
 async function actFile(st, u, q) {
   const id = safeId(q.id);
   const which = safeWhich(q.which);
   const i = safeIndex(q.chunk == null ? 0 : q.chunk);
-  const idx = await loadIndex(st, u);
-  const item = findEntry(idx, id, "ready");
-  if (i >= item[which].chunks) throw httpError(416, "Chunk out of range.");
+  const { e } = await waitEntry(st, u, id, "ready");
+  if (i >= e[which].chunks) throw httpError(416, "Chunk out of range.");
   const buf = await st.get(K.chunk(u, id, which, i), { type: "arrayBuffer" });
   if (!buf) throw httpError(404, "Saved drawing data not found.");
   return {
@@ -210,8 +243,7 @@ async function actChunk(st, u, b) {
   const which = safeWhich(b.which);
   const i = safeIndex(b.index);
   if (!b.dataB64) throw httpError(400, "Empty piece.");
-  const idx = await loadIndex(st, u);
-  const e = findEntry(idx, id, "uploading");
+  const { e } = await waitEntry(st, u, id, "uploading");
   const f = e[which];
   if (i >= f.chunks) throw httpError(400, "Piece number out of range.");
   const bytes = Buffer.from(String(b.dataB64), "base64");
@@ -223,11 +255,9 @@ async function actChunk(st, u, b) {
 
 async function actCommit(st, u, b) {
   const id = safeId(b.id);
-  const idx = await loadIndex(st, u);
-  const e = findEntry(idx, id, "uploading");
-  for (const w of ["A", "B"]) {
-    const { blobs } = await st.list({ prefix: `${K.base(u, id)}/${w}/` });
-    if (blobs.length !== e[w].chunks) throw httpError(409, `Drawing ${w} didn't finish uploading. Please try saving again.`);
+  const { idx, e } = await waitEntry(st, u, id, "uploading");
+  if (!(await allPresent(st, u, id, e))) {
+    throw httpError(409, "The drawings didn't finish uploading. Please try saving again.");
   }
   const state = cleanState(b.state);
   await writeJSON(st, K.state(u, id), state);
@@ -242,8 +272,7 @@ async function actCommit(st, u, b) {
 
 async function actUpdate(st, u, b) {
   const id = safeId(b.id);
-  const idx = await loadIndex(st, u);
-  const e = findEntry(idx, id, "ready");
+  const { idx, e } = await waitEntry(st, u, id, "ready");
   const state = cleanState(b.state);
   await writeJSON(st, K.state(u, id), state);
   e.updated = Date.now();
@@ -257,8 +286,7 @@ async function actRename(st, u, b) {
   const id = safeId(b.id);
   const title = str(b.title, 140).trim();
   if (!title) throw httpError(400, "Give the comparison a name.");
-  const idx = await loadIndex(st, u);
-  const e = findEntry(idx, id, "ready");
+  const { idx, e } = await waitEntry(st, u, id, "ready");
   e.title = title;
   e.updated = Date.now();
   const state = await readJSON(st, K.state(u, id), null);
@@ -267,13 +295,21 @@ async function actRename(st, u, b) {
   return json(200, { ok: true, title });
 }
 
+// Deleting something that's already gone is fine (it just reports the current totals).
 async function actDelete(st, u, b) {
   const id = safeId(b.id);
-  const idx = await loadIndex(st, u);
-  findEntry(idx, id);
-  await deleteAll(st, K.base(u, id) + "/");        // files first, so a failure can be retried
-  idx.items = idx.items.filter((x) => x.id !== id);
-  await saveIndex(st, u, idx);
+  let idx = await loadIndex(st, u);
+  let e = idx.items.find((x) => x.id === id);
+  if (!e) {
+    await sleep(500);
+    idx = await loadIndex(st, u);
+    e = idx.items.find((x) => x.id === id);
+  }
+  if (e) {
+    await deleteEntryFiles(st, u, e);              // files first, so a failure can be retried
+    idx.items = idx.items.filter((x) => x.id !== id);
+    await saveIndex(st, u, idx);
+  }
   return json(200, { ok: true, slotsUsed: idx.items.length, usedBytes: usedBytes(idx) });
 }
 
@@ -282,7 +318,7 @@ exports.handler = async (event, context) => {
   try {
     const user = requireUser(context);          // 401 if not signed in
     const u = userKey(user);
-    const st = strongStore(event);
+    const st = store(event);
     const q = event.queryStringParameters || {};
 
     if (event.httpMethod === "GET") {
