@@ -68,11 +68,6 @@ function download(blob, filename) {
   setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
 }
 
-const fmtDateTime = (ms) => {
-  const d = new Date(ms);
-  return isNaN(d) ? "" : d.toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-};
-
 /* ------------------------------------------------------------------ *
  *  Word
  * ------------------------------------------------------------------ */
@@ -121,7 +116,7 @@ export async function exportWord(ctx) {
   }));
   children.push(para(runs(
     ctx.mode === "overlay"
-      ? "Overlay view: red = only in A, cyan = only in B, dark = unchanged."
+      ? (ctx.overlayNote || "Overlay view: dark = unchanged.")
       : "Slider view: A is left of the line, B is right of it.",
     { size: 16, color: "666666", italics: true }), { alignment: AlignmentType.CENTER }));
 

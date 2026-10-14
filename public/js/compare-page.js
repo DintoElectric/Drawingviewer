@@ -1,5 +1,6 @@
 import { requireLogin } from "./auth.js";
 import * as cloud from "./compare-cloud.js";
+import * as colors from "./cmp-colors.js";
 
 /* ------------------------------------------------------------------ *
  *  Compare page: two drawings (PDF or image), slider/overlay compare,
@@ -9,7 +10,7 @@ import * as cloud from "./compare-cloud.js";
  *  Word/Excel export contract (implemented in compare-export.js):
  *    exportWord(ctx)  /  exportExcel(ctx)
  *    ctx = {
- *      title, preparedBy, date, dateISO, slug, zoneNote, mode,
+ *      title, preparedBy, date, dateISO, slug, zoneNote, mode, overlayNote,
  *      fileA: {name, page, pages}, fileB: {name, page, pages},
  *      notes: [{n, id, cat, text, zone, x, y, pageA, pageB, created}],
  *      getOverview(maxPx) -> Promise<{data:Uint8Array, w, h}>   // PNG
@@ -43,6 +44,11 @@ const handle = divider.querySelector(".handle");
 const pinsEl = $("pins");
 const emptyEl = $("empty");
 
+// overlay colors (a personal preference kept in this browser)
+colors.init();
+colors.bindLegend($("legend"));
+colors.bindButton($("colorBtn"));
+
 /* ---------- limits (conservative for iPad Safari canvas memory) ---------- */
 const MIN_Z = 0.4, MAX_Z = 12;
 const BASE_MAX_PX = 8e6;
@@ -63,7 +69,13 @@ let edit = null;                         // note (or draft) open in the editor
 let cloudId = null;                      // id of the saved copy on the server (null = not saved)
 let autosaver = null;
 let lastSave = "saved";                  // "saving" | "saved" | "error"
-let savedData = null;                    // last list from the server
+let savedData = null;                    // last list shown on the start screen
+
+// Saved lists can lag a moment behind changes on the server, so remember what was
+// saved / deleted / renamed during this visit and apply it to every list we show.
+const sessionAdded = new Map();          // id -> item saved during this visit
+const sessionGone = new Set();           // ids deleted during this visit
+const sessionRenamed = new Map();        // id -> new title
 
 /* ---------- toast helpers ---------- */
 function toast(title, body, err = true, ms = 4200) {
@@ -342,6 +354,7 @@ function applyMode() {
   $("modeSlider").classList.toggle("on", slider);
   $("modeOverlay").classList.toggle("on", !slider);
   $("opacityWrap").classList.toggle("hidden", slider);
+  $("colorBtn").classList.toggle("hidden", slider);
   $("legend").classList.toggle("hidden", slider);
   if (slider) applySlider();
   else { LA.el.style.clipPath = ""; LA.el.style.webkitClipPath = ""; }
@@ -583,6 +596,22 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* ---------- list of saved comparisons ---------- */
+// Applies what happened during this visit on top of whatever the server says.
+function mergeList(d) {
+  const items = d.items.filter((i) => !sessionGone.has(i.id));
+  for (const [id, it] of sessionAdded) {
+    if (!sessionGone.has(id) && !items.some((i) => i.id === id)) items.push(it);
+  }
+  const out = items
+    .map((i) => (sessionRenamed.has(i.id) ? { ...i, title: sessionRenamed.get(i.id) } : i))
+    .sort((a, b) => b.updated - a.updated);
+  const used = out.reduce((s, i) => s + (i.A?.size || 0) + (i.B?.size || 0), 0);
+  return { ...d, items: out, slotsUsed: out.length, usedBytes: used };
+}
+async function loadSaved() {
+  return mergeList(await cloud.listComparisons());
+}
+
 function renderSavedList(container, items, { compact = false } = {}) {
   container.innerHTML = items.map((it) => {
     const nn = it.notes || 0;
@@ -608,17 +637,22 @@ function renderSavedList(container, items, { compact = false } = {}) {
   }).join("");
 }
 
+function paintSaved(d) {
+  savedData = d;
+  const msg = $("savedMsg");
+  $("savedMeta").textContent =
+    `${d.slotsUsed} of ${d.limits.maxComparisons} saved · ${cloud.fmtBytes(d.usedBytes)} of ${cloud.fmtBytes(d.limits.maxTotalBytes)} used`;
+  msg.classList.toggle("hidden", d.items.length > 0);
+  msg.textContent = d.items.length ? "" :
+    "Nothing saved yet. After you compare two drawings, tap Save to keep the comparison and its notes here.";
+  renderSavedList($("savedList"), d.items);
+}
+
 async function refreshSaved() {
   const msg = $("savedMsg");
   try {
-    const d = await cloud.listComparisons();
-    savedData = d;
-    $("savedMeta").textContent =
-      `${d.slotsUsed} of ${d.limits.maxComparisons} saved · ${cloud.fmtBytes(d.usedBytes)} of ${cloud.fmtBytes(d.limits.maxTotalBytes)} used`;
-    msg.classList.toggle("hidden", d.items.length > 0);
-    msg.textContent = d.items.length ? "" :
-      "Nothing saved yet. After you compare two drawings, tap Save to keep the comparison and its notes here.";
-    renderSavedList($("savedList"), d.items);
+    const d = await loadSaved();
+    paintSaved(d);
     return d;
   } catch (e) {
     $("savedMeta").textContent = "";
@@ -690,9 +724,11 @@ async function deleteSaved(id, it) {
   if (!confirm(`Delete ${name}? This can't be undone. If you may want it later, cancel and use Export first.`)) return;
   try {
     await cloud.deleteComparison(id);
+    sessionGone.add(id); sessionAdded.delete(id);
     if (cloudId === id) detachCloud();
     toast("Deleted", "", false, 2000);
   } catch (e) { flash("Couldn't delete", e.message); }
+  if (savedData) paintSaved(mergeList(savedData));       // show the change right away
   await refreshSaved();
   if (fullOpen) await refreshFull();
 }
@@ -713,6 +749,8 @@ async function doRename() {
   const id = renameId;
   try {
     await cloud.renameComparison(id, title);
+    sessionRenamed.set(id, title);
+    if (sessionAdded.has(id)) sessionAdded.set(id, { ...sessionAdded.get(id), title });
     closeRename();
     await refreshSaved();
     if (fullOpen) await refreshFull();
@@ -747,7 +785,7 @@ function applyFull(d) {
     : `${fullReason} Export one to a file if you may want it later, then delete it to make room.`;
 }
 async function refreshFull() {
-  try { applyFull(await cloud.listComparisons()); }
+  try { applyFull(await loadSaved()); }
   catch (e) { flash("Couldn't refresh the list", e.message); }
 }
 function closeFull() { fullOpen = false; $("fullDlg").classList.add("hidden"); }
@@ -760,7 +798,7 @@ async function saveToCloud() {
   if (cloudId) { if (autosaver) await autosaver.flush(); return; }     // already saved: save pending changes now
   const A = slots.A.doc.file, B = slots.B.doc.file;
   let d;
-  try { d = await cloud.listComparisons(); }
+  try { d = await loadSaved(); }
   catch (e) { flash("Couldn't reach your account", e.message); return; }
   savedData = d;
   const L = d.limits;
@@ -781,6 +819,8 @@ async function saveToCloud() {
   try {
     const item = await cloud.saveComparison({ A, B, state: currentState(), signal: ctl.signal, onProgress: busyProgress });
     busyHide();
+    sessionAdded.set(item.id, item);
+    sessionGone.delete(item.id);
     attachCloud(item.id);
     toast("Saved to your account", item.title || "", false, 2500);
   } catch (e) {
@@ -1210,8 +1250,9 @@ async function buildOverview(maxPx) {
   tmp.width = W; tmp.height = H;
   await renderFit(LA.page, tmp).promise;
   if (view.mode === "overlay") {
-    tintCanvas(out, "#00b7d9");
-    tintCanvas(tmp, "#e5342a");
+    const col = colors.get();
+    tintCanvas(out, col.b);            // Drawing B (newer) in its color
+    tintCanvas(tmp, col.a);            // Drawing A (older) in its color
     ctx.globalCompositeOperation = "multiply";
     ctx.globalAlpha = view.opacity;
     ctx.drawImage(tmp, 0, 0);
@@ -1299,7 +1340,7 @@ async function doPrint() {
 
     const printed = new Date().toLocaleDateString();
     const modeText = view.mode === "overlay"
-      ? "Overlay: red = only in A, cyan = only in B, dark = unchanged"
+      ? colors.overlayText("A", "B")
       : "Slider: A is left of the line, B is right of it";
     const by = $("preparedBy").value.trim();
     $("printHead").innerHTML =
@@ -1365,6 +1406,7 @@ function buildCtx() {
     slug: title.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "Drawing_Comparison",
     zoneNote: ZONE_NOTE,
     mode: view.mode,
+    overlayNote: colors.overlayText("A", "B") + ".",
     fileA: { name: slots.A.doc.name, page: slots.A.page, pages: slots.A.doc.numPages },
     fileB: { name: slots.B.doc.name, page: slots.B.page, pages: slots.B.doc.numPages },
     notes: notes.map((n, i) => ({ n: i + 1, id: n.id, cat: n.cat, text: n.text, zone: zoneOf(n.x, n.y),

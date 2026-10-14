@@ -1,5 +1,6 @@
 import { requireLogin, api, apiBlob } from "./auth.js";
 import { fmtDate } from "./ui.js";
+import * as colors from "./cmp-colors.js";
 
 /* ------------------------------------------------------------------ *
  *  Sheet viewer: pdf.js canvas rendering, pinch/pan zoom,
@@ -30,6 +31,11 @@ const divider = $("divider");
 const handle = divider.querySelector(".handle");
 const emptyEl = $("empty");
 const dlBtn = $("downloadBtn");
+
+// overlay colors (a personal preference kept in this browser)
+colors.init();
+colors.bindLegend($("legend"));
+colors.bindButton($("colorBtn"));
 
 /* ---------- limits (kept conservative for iPad Safari canvas memory) ---------- */
 const MIN_Z = 0.4, MAX_Z = 12;
@@ -319,6 +325,7 @@ function syncCompareUI() {
   $("modeOverlay").classList.toggle("on", view.mode === "overlay");
   const ov = on && view.mode === "overlay";
   $("opacityWrap").classList.toggle("hidden", !ov);
+  $("colorBtn").classList.toggle("hidden", !ov);
   $("legend").classList.toggle("hidden", !ov);
   if (on && view.revA != null && view.revB != null) {
     const sel = $("cmpSelect");
@@ -328,9 +335,10 @@ function syncCompareUI() {
     $("lblA").textContent = `Rev ${view.revA}`;
     $("lblB").textContent = `Rev ${view.revB}`;
     const aOlder = view.revA < view.revB;
+    colors.setLabels({ a: `Rev ${view.revA}`, b: `Rev ${view.revB}` });
     $("legend").innerHTML =
-      `<span><i class="sw sw-a"></i><b>Rev ${view.revA}</b> only${aOlder ? " (removed)" : " (added)"}</span>` +
-      `<span><i class="sw sw-b"></i><b>Rev ${view.revB}</b> only${aOlder ? " (added)" : " (removed)"}</span>` +
+      `<span>${colors.swatchBtn("a")}<b>Rev ${view.revA}</b> only${aOlder ? " (removed)" : " (added)"}</span>` +
+      `<span>${colors.swatchBtn("b")}<b>Rev ${view.revB}</b> only${aOlder ? " (added)" : " (removed)"}</span>` +
       `<span><i class="sw sw-k"></i>Unchanged</span>`;
   }
   applyMode();
@@ -629,8 +637,9 @@ async function buildPrintCanvas() {
   tmp.width = W; tmp.height = H;
   await renderFit(LA.page, tmp).promise;
   if (view.mode === "overlay") {
-    tintCanvas(out, "#00b7d9");
-    tintCanvas(tmp, "#e5342a");
+    const col = colors.get();
+    tintCanvas(out, col.b);
+    tintCanvas(tmp, col.a);
     ctx.globalCompositeOperation = "multiply";
     ctx.globalAlpha = view.opacity;
     ctx.drawImage(tmp, 0, 0);
@@ -668,7 +677,7 @@ async function doPrint() {
     let sub, warn = "";
     if (view.cmp) {
       const detail = view.mode === "overlay"
-        ? `Overlay: red = Rev ${view.revA} only, cyan = Rev ${view.revB} only, dark = unchanged`
+        ? colors.overlayText(`Rev ${view.revA}`, `Rev ${view.revB}`)
         : `Slider compare: Rev ${view.revA} (left) vs Rev ${view.revB} (right)`;
       sub = `${detail} · Printed ${printed}`;
       warn = "Comparison print — not an issued drawing";
