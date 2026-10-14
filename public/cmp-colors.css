@@ -1,0 +1,59 @@
+/* cmp-colors.css — the two overlay colors (set from cmp-colors.js) and the picker.
+   Load this AFTER app.css so these rules take over the old fixed red/cyan. */
+
+:root {
+  --cmp-a: #e5342a;
+  --cmp-b: #00b7d9;
+  --cmp-a-ink: #ffffff;
+  --cmp-b-ink: #06222a;
+}
+
+/* overlay tints, legend dots, and the A/B tags */
+.tint-a { background: var(--cmp-a); }
+.tint-b { background: var(--cmp-b); }
+.sw-a { background: var(--cmp-a); }
+.sw-b { background: var(--cmp-b); }
+.cp-tag-a { background: var(--cmp-a); color: var(--cmp-a-ink); }
+.cp-tag-b { background: var(--cmp-b); color: var(--cmp-b-ink); }
+
+/* the legend used to ignore touches; its dots are buttons now */
+.legend { pointer-events: auto; }
+.sw-btn { position: relative; display: inline-grid; place-items: center; width: 22px; height: 22px;
+  padding: 0; margin: 0 6px 0 -2px; background: transparent; border: 0; border-radius: 6px; cursor: pointer;
+  vertical-align: middle; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.sw-btn::after { content: ""; position: absolute; inset: -11px; }      /* 44 px touch target */
+.sw-btn .sw { width: 14px; height: 14px; margin: 0; border-radius: 4px; box-shadow: 0 0 0 1px rgba(255,255,255,.4); }
+.sw-btn:focus-visible { outline: 2px solid var(--color-accent-300); outline-offset: 1px; }
+@media (hover: hover) { .sw-btn:hover .sw { box-shadow: 0 0 0 2px var(--color-accent-300); } }
+
+/* color picker popover */
+.cpk { position: fixed; z-index: 70; padding: 14px; border-radius: 12px; box-sizing: border-box;
+  background: var(--color-surface); box-shadow: 0 0 0 1px #595d6c, 0 16px 40px rgba(0,0,0,.65); }
+.cpk-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cpk-title { font: 500 15px var(--font-heading); }
+.cpk-x { width: 40px; height: 40px; margin: -8px -8px -8px 0; display: grid; place-items: center; background: transparent;
+  border: 0; border-radius: 8px; color: var(--color-neutral-400); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.cpk-x i { font-size: 18px; }
+.cpk-sec + .cpk-sec { margin-top: 14px; }
+.cpk-lbl { font-size: 12px; color: var(--color-neutral-400); margin-bottom: 7px; }
+.cpk-lbl b { color: var(--color-neutral-200); font-weight: 600; }
+.cpk-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cpk-sw, .cpk-custom { position: relative; width: 100%; aspect-ratio: 1; min-height: 36px; padding: 0; border-radius: 50%;
+  border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.cpk-sw { background: var(--c); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.cpk-sw[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 4px #fff; }
+.cpk-sw[aria-pressed="true"]::after,
+.cpk-custom.on::after { content: ""; position: absolute; left: 50%; top: 46%; width: 7px; height: 12px;
+  border: solid #fff; border-width: 0 2.5px 2.5px 0; transform: translate(-50%, -50%) rotate(45deg);
+  filter: drop-shadow(0 0 1px rgba(0,0,0,.7)); }
+.cpk-custom { display: grid; place-items: center; overflow: hidden; background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--color-neutral-600); color: var(--color-neutral-300); }
+.cpk-custom i { font-size: 17px; }
+.cpk-custom.on { background: var(--c); color: transparent; box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 4px #fff; }
+.cpk-custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.cpk-sw:focus-visible, .cpk-custom:focus-within { outline: 2px solid var(--color-accent-300); outline-offset: 3px; }
+.cpk-warn { margin-top: 12px; padding: 9px 11px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+  background: rgba(217,119,6,.14); box-shadow: inset 0 0 0 1px rgba(251,191,36,.45); color: #fbd38d; }
+.cpk-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
+.cpk-reset { min-height: 40px; padding: 0 4px; background: transparent; border: 0; cursor: pointer;
+  color: var(--color-accent-300); font: 500 13px var(--font-body); -webkit-tap-highlight-color: transparent; }

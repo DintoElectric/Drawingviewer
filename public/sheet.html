@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./app.css">
+<link rel="stylesheet" href="./cmp-colors.css">
 <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
 <!-- pdf.js (classic build exposes the global pdfjsLib) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -50,6 +51,7 @@
         <button class="seg-btn" id="modeOverlay"><i class="ph ph-stack"></i><span>Overlay</span></button>
       </div>
       <label class="opacity hidden" id="opacityWrap"><span>Old rev</span><input type="range" id="opacity" min="0" max="100" value="100"></label>
+      <button class="tbtn tbtn-text hidden" id="colorBtn" title="Change the overlay colors"><i class="ph ph-palette"></i><span>Colors</span></button>
     </div>
 
     <div class="spacer"></div>
@@ -67,11 +69,7 @@
       <!-- fixed labels (don't move with zoom/pan) -->
       <div class="cmp-chip chip-a hidden" id="lblA"></div>
       <div class="cmp-chip chip-b hidden" id="lblB"></div>
-      <div class="legend hidden" id="legend">
-        <span><i class="sw sw-a"></i><b id="legA"></b> only (removed)</span>
-        <span><i class="sw sw-b"></i><b id="legB"></b> only (added)</span>
-        <span><i class="sw sw-k"></i>Unchanged</span>
-      </div>
+      <div class="legend hidden" id="legend"></div>
 
       <div class="empty hidden" id="empty"></div>
     </div>

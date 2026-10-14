@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./app.css">
+<link rel="stylesheet" href="./cmp-colors.css">
 <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
 <!-- pdf.js (classic build exposes the global pdfjsLib) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -115,6 +116,7 @@
           <button class="seg-btn" id="modeOverlay"><i class="ph ph-stack"></i><span>Overlay</span></button>
         </div>
         <label class="opacity hidden" id="opacityWrap"><span>Drawing A</span><input type="range" id="opacity" min="0" max="100" value="100"></label>
+        <button class="tbtn tbtn-text hidden" id="colorBtn" title="Change the overlay colors"><i class="ph ph-palette"></i><span>Colors</span></button>
       </div>
 
       <div class="vrule"></div>
@@ -157,8 +159,8 @@
         <div class="cmp-chip chip-a" id="lblA">A</div>
         <div class="cmp-chip chip-b" id="lblB">B</div>
         <div class="legend hidden" id="legend">
-          <span><i class="sw sw-a"></i><b>A</b> only (removed)</span>
-          <span><i class="sw sw-b"></i><b>B</b> only (added)</span>
+          <span><button type="button" class="sw-btn" data-color="a" aria-label="Change the color for Drawing A" title="Tap to change colors"><i class="sw sw-a"></i></button><b>A</b> only (removed)</span>
+          <span><button type="button" class="sw-btn" data-color="b" aria-label="Change the color for Drawing B" title="Tap to change colors"><i class="sw sw-b"></i></button><b>B</b> only (added)</span>
           <span><i class="sw sw-k"></i>Unchanged</span>
         </div>
         <div class="cp-banner hidden" id="noteBanner"><i class="ph ph-map-pin-plus"></i>Tap the drawing to drop a numbered note</div>
