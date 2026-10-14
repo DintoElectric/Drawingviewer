@@ -1,11 +1,12 @@
 import { requireLogin } from "./auth.js";
+import * as cloud from "./compare-cloud.js";
 
 /* ------------------------------------------------------------------ *
- *  Compare page: two local drawings (PDF or image), slider/overlay
- *  compare, pinch/pan zoom, numbered notes, print, and export.
- *  Nothing is uploaded; files are read in the browser only.
+ *  Compare page: two drawings (PDF or image), slider/overlay compare,
+ *  pinch/pan zoom, numbered notes, print, export, and saved
+ *  comparisons (per login) with a single-file export (.dhcompare).
  *
- *  Export contract (implemented in compare-export.js):
+ *  Word/Excel export contract (implemented in compare-export.js):
  *    exportWord(ctx)  /  exportExcel(ctx)
  *    ctx = {
  *      title, preparedBy, date, dateISO, slug, zoneNote, mode,
@@ -30,6 +31,10 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const dpr = () => Math.min(window.devicePixelRatio || 1, 3);
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 const baseName = (n) => String(n || "").replace(/\.[^.]+$/, "");
+const fmtWhen = (ms) => {
+  const d = new Date(ms);
+  return isNaN(d) ? "" : d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+};
 
 const viewport = $("viewport");
 const stage = $("stage");
@@ -49,11 +54,16 @@ const ZCOLS = 8, ZROWS = 6;
 /* ---------- state ---------- */
 const S = { z: 1, tx: 0, ty: 0, vw: 800, vh: 600, W0: 800, H0: 600 };
 const view = { mode: "slider", p: 0.5, opacity: 1, noting: false };
-const slots = { A: null, B: null };      // {doc, page}
+const slots = { A: null, B: null };      // {doc, page}   doc = {name, fp, file, numPages, getPage, destroy}
 let cpOn = false;
 let notes = [];                          // {id,x,y,pa,pb,cat,text,t}
 let selId = null;
 let edit = null;                         // note (or draft) open in the editor
+
+let cloudId = null;                      // id of the saved copy on the server (null = not saved)
+let autosaver = null;
+let lastSave = "saved";                  // "saving" | "saved" | "error"
+let savedData = null;                    // last list from the server
 
 /* ---------- toast helpers ---------- */
 function toast(title, body, err = true, ms = 4200) {
@@ -96,7 +106,7 @@ async function openFile(file) {
     try {
       const buf = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
-      return { name: file.name, fp, numPages: pdf.numPages, getPage: (n) => pdf.getPage(n),
+      return { name: file.name, fp, file, numPages: pdf.numPages, getPage: (n) => pdf.getPage(n),
                destroy() { try { pdf.destroy(); } catch (e) {} } };
     } catch (e) {
       if (e && e.name === "PasswordException") throw new Error("That PDF is password-protected.");
@@ -112,7 +122,7 @@ async function openFile(file) {
   try { await img.decode(); }
   catch (e) { URL.revokeObjectURL(url); throw new Error("Couldn't read that image. Try a PDF, JPG or PNG."); }
   const page = imagePage(img);
-  return { name: file.name, fp, numPages: 1, getPage: async () => page, destroy() { URL.revokeObjectURL(url); } };
+  return { name: file.name, fp, file, numPages: 1, getPage: async () => page, destroy() { URL.revokeObjectURL(url); } };
 }
 
 /* ------------------------------------------------------------------ *
@@ -345,11 +355,38 @@ function applySlider() {
   positionHandle();
 }
 
-$("modeSlider").addEventListener("click", () => { view.mode = "slider"; applyMode(); });
-$("modeOverlay").addEventListener("click", () => { view.mode = "overlay"; applyMode(); });
+$("modeSlider").addEventListener("click", () => { view.mode = "slider"; applyMode(); changed(); });
+$("modeOverlay").addEventListener("click", () => { view.mode = "overlay"; applyMode(); changed(); });
 $("opacity").addEventListener("input", (e) => {
   view.opacity = parseInt(e.target.value, 10) / 100;
   LA.el.style.opacity = String(view.opacity);
+});
+$("opacity").addEventListener("change", () => changed());
+
+/* ------------------------------------------------------------------ *
+ *  Busy dialog (progress for saving / opening / exporting)
+ * ------------------------------------------------------------------ */
+let busyCtl = null;
+const busyActive = () => !$("busy").classList.contains("hidden");
+function busyShow(title, text, ctl) {
+  busyCtl = ctl || null;
+  $("busyTitle").textContent = title;
+  $("busyText").textContent = text || "";
+  $("busyBar").style.width = "0%";
+  $("busyCancel").classList.toggle("hidden", !ctl);
+  $("busy").classList.remove("hidden");
+}
+function busyProgress(p) {
+  const verb = p.phase === "upload" ? "Saving" : "Downloading";
+  $("busyText").textContent = `${verb} Drawing ${p.which}… ${cloud.fmtBytes(p.done)} of ${cloud.fmtBytes(p.total)}`;
+  $("busyBar").style.width = Math.min(100, p.total ? (p.done / p.total) * 100 : 0) + "%";
+}
+function busyHide() { $("busy").classList.add("hidden"); busyCtl = null; }
+$("busyCancel").addEventListener("click", () => {
+  if (busyCtl) { $("busyText").textContent = "Cancelling…"; busyCtl.abort(); }
+});
+window.addEventListener("beforeunload", (e) => {
+  if (busyActive()) { e.preventDefault(); e.returnValue = ""; }
 });
 
 /* ------------------------------------------------------------------ *
@@ -369,6 +406,14 @@ function updateDz(w) {
   $("dz" + w).classList.toggle("has-file", !!s);
 }
 
+function resetSlots() {
+  for (const w of ["A", "B"]) {
+    if (slots[w]) { try { slots[w].doc.destroy(); } catch (e) {} }
+    slots[w] = null;
+    updateDz(w);
+  }
+}
+
 async function setFile(which, file) {
   if (!file) return;
   showStartMsg(`Reading ${file.name}…`, false);
@@ -384,6 +429,7 @@ async function setFile(which, file) {
   showStartMsg("");
   updateDz(which);
   if (cpOn) {
+    detachCloud();          // the person already confirmed this when they tapped Replace
     selId = null;
     loadState();            // a different pair of files gets its own notes
     syncChrome(); renderNotes();
@@ -399,7 +445,10 @@ async function setFile(which, file) {
   ["dragleave", "drop"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
   dz.addEventListener("drop", (e) => { const f = e.dataTransfer?.files?.[0]; if (f) setFile(w, f); });
   $("file" + w).addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) setFile(w, f); });
-  $("replace" + w).addEventListener("click", () => $("file" + w).click());
+  $("replace" + w).addEventListener("click", () => {
+    if (cloudId && !confirm("Replacing a drawing starts a new comparison, because notes belong to a pair of drawings. Your saved copy stays as it is. Continue?")) return;
+    $("file" + w).click();
+  });
   $("pagePrev" + w).addEventListener("click", () => gotoPage(w, slots[w].page - 1));
   $("pageNext" + w).addEventListener("click", () => gotoPage(w, slots[w].page + 1));
 });
@@ -409,45 +458,373 @@ async function gotoPage(w, n) {
   n = clamp(n, 1, s.doc.numPages);
   if (n === s.page) return;
   s.page = n;
-  syncChrome(); renderNotes();
+  syncChrome(); renderNotes(); changed();
   await mountBoth(true);
 }
 
 async function swapAB() {
+  if (cloudId && !confirm("Swapping A and B makes this a new comparison. Your saved copy stays as it is. Continue?")) return;
+  detachCloud();
   [slots.A, slots.B] = [slots.B, slots.A];
   notes.forEach((n) => { const t = n.pa; n.pa = n.pb; n.pb = t; });
-  persist(); syncChrome(); renderNotes();
+  changed(); syncChrome(); renderNotes();
   await mountBoth(false);
 }
 $("swapBtn").addEventListener("click", swapAB);
 
-async function startCompare() {
+async function startCompare(opts = {}) {
   cpOn = true;
   $("startScreen").classList.add("hidden");
   $("cpApp").classList.remove("hidden");
   $("newBtn").classList.remove("hidden");
-  loadState();
-  syncChrome(); renderNotes();
+  if (opts.state) applyState(opts.state); else loadState();
+  syncChrome(); renderNotes(); syncSaveUI();
   await nextFrame();
   await mountBoth(false);
 }
 
-function startOver() {
-  persist();
+async function startOver() {
+  const wasCloud = !!cloudId;
+  if (wasCloud && autosaver) {
+    await autosaver.flush();
+    if (lastSave === "error" && !confirm("Your latest changes couldn't be saved to your account. Close anyway?")) return;
+  }
+  detachCloud();
+  if (!wasCloud) persist();
   cpOn = false;
   mountSeq++;
   setNoting(false);
   closeEditor();
   for (const L of [LA, LB]) { cancel(L.baseTask); clearDetail(L); L.page = null; }
-  for (const w of ["A", "B"]) { if (slots[w]) { try { slots[w].doc.destroy(); } catch (e) {} } slots[w] = null; updateDz(w); }
+  resetSlots();
   notes = []; selId = null;
   stage.classList.add("hidden");
   $("cpApp").classList.add("hidden");
   $("newBtn").classList.add("hidden");
   $("startScreen").classList.remove("hidden");
   showStartMsg("");
+  refreshSaved();
 }
 $("newBtn").addEventListener("click", startOver);
+
+/* ------------------------------------------------------------------ *
+ *  Saved comparisons (on the server, under this login)
+ * ------------------------------------------------------------------ */
+function currentState() {
+  return {
+    title: $("docTitle").value.trim(),
+    preparedBy: $("preparedBy").value.trim(),
+    notes: notes.map((n) => ({ id: n.id, x: n.x, y: n.y, pa: n.pa, pb: n.pb, cat: n.cat, text: n.text, t: n.t })),
+    view: { mode: view.mode, p: view.p, opacity: view.opacity },
+    pages: { A: slots.A ? slots.A.page : 1, B: slots.B ? slots.B.page : 1 },
+  };
+}
+
+// Loads notes / title / view settings from a saved comparison or an imported file.
+function applyState(s) {
+  s = s || {};
+  notes = (Array.isArray(s.notes) ? s.notes : []).map((n) => ({
+    id: n.id, x: n.x, y: n.y, pa: n.pa, pb: n.pb, cat: n.cat, text: n.text || "", t: n.t || Date.now(),
+  }));
+  $("docTitle").value = s.title || "";
+  let by = s.preparedBy || "";
+  if (!by) { try { by = localStorage.getItem("dh-compare-by") || ""; } catch (e) {} }
+  $("preparedBy").value = by;
+  const v = s.view || {};
+  view.mode = v.mode === "overlay" ? "overlay" : "slider";
+  view.p = typeof v.p === "number" ? clamp(v.p, 0, 1) : 0.5;
+  view.opacity = typeof v.opacity === "number" ? clamp(v.opacity, 0, 1) : 1;
+  $("opacity").value = String(Math.round(view.opacity * 100));
+  const pg = s.pages || {};
+  slots.A.page = clamp(parseInt(pg.A, 10) || 1, 1, slots.A.doc.numPages);
+  slots.B.page = clamp(parseInt(pg.B, 10) || 1, 1, slots.B.doc.numPages);
+  selId = null;
+}
+
+function onSaveStatus(s, err) {
+  lastSave = s;
+  const el = $("saveStatus");
+  el.className = "save-status " + s;
+  el.textContent = s === "saving" ? "Saving…" : s === "saved" ? "All changes saved" : "Couldn't save. Retrying…";
+  el.title = s === "error" && err ? err.message : "";
+}
+
+function syncSaveUI() {
+  $("saveBtnLabel").textContent = cloudId ? "Saved" : "Save";
+  $("saveBtn").classList.toggle("on", !!cloudId);
+  $("saveBtn").title = cloudId
+    ? "Saved to your account. Changes save automatically."
+    : "Save this comparison to your account";
+  if (!cloudId) { $("saveStatus").textContent = ""; $("saveStatus").className = "save-status"; }
+}
+
+function attachCloud(id) {
+  if (autosaver) autosaver.stop();
+  cloudId = id;
+  autosaver = cloud.createAutosaver({ id, getState: currentState, onStatus: onSaveStatus });
+  onSaveStatus("saved");
+  syncSaveUI();
+}
+function detachCloud() {
+  if (autosaver) { autosaver.stop(); autosaver = null; }
+  cloudId = null;
+  syncSaveUI();
+}
+
+// Called whenever notes, title, pages or view settings change.
+function changed() {
+  if (!cpOn) return;
+  persist();                                   // local copy (only when not saved to the server)
+  if (cloudId && autosaver) autosaver.schedule();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && autosaver) autosaver.flush();
+});
+
+/* ---------- list of saved comparisons ---------- */
+function renderSavedList(container, items, { compact = false } = {}) {
+  container.innerHTML = items.map((it) => {
+    const nn = it.notes || 0;
+    const open = compact ? "" :
+      `<button class="btn btn-primary" data-act="open" data-id="${esc(it.id)}" style="min-height:40px">Open</button>`;
+    return `
+    <div class="sv-item" data-id="${esc(it.id)}">
+      <div class="sv-main">
+        <div class="sv-title">${esc(it.title || "Untitled comparison")}</div>
+        <div class="sv-files">
+          <span class="cp-chip-tag cp-tag-a">A</span><span class="sv-fn">${esc(it.A.name)}</span>
+          <span class="cp-chip-tag cp-tag-b">B</span><span class="sv-fn">${esc(it.B.name)}</span>
+        </div>
+        <div class="sv-meta">${nn} note${nn === 1 ? "" : "s"} · ${cloud.fmtBytes((it.A.size || 0) + (it.B.size || 0))} · ${esc(fmtWhen(it.updated))}</div>
+      </div>
+      <div class="sv-actions">
+        ${open}
+        <button class="btn btn-secondary" data-act="export" data-id="${esc(it.id)}" style="min-height:40px" title="Export to a file you can reopen later"><i class="ph ph-package"></i>Export</button>
+        <button class="btn btn-secondary" data-act="rename" data-id="${esc(it.id)}" style="min-height:40px" aria-label="Rename"><i class="ph ph-pencil-simple"></i></button>
+        <button class="btn btn-secondary" data-act="delete" data-id="${esc(it.id)}" style="min-height:40px" aria-label="Delete"><i class="ph ph-trash"></i></button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function refreshSaved() {
+  const msg = $("savedMsg");
+  try {
+    const d = await cloud.listComparisons();
+    savedData = d;
+    $("savedMeta").textContent =
+      `${d.slotsUsed} of ${d.limits.maxComparisons} saved · ${cloud.fmtBytes(d.usedBytes)} of ${cloud.fmtBytes(d.limits.maxTotalBytes)} used`;
+    msg.classList.toggle("hidden", d.items.length > 0);
+    msg.textContent = d.items.length ? "" :
+      "Nothing saved yet. After you compare two drawings, tap Save to keep the comparison and its notes here.";
+    renderSavedList($("savedList"), d.items);
+    return d;
+  } catch (e) {
+    $("savedMeta").textContent = "";
+    msg.classList.remove("hidden");
+    msg.textContent = "Couldn't load your saved comparisons. " + e.message;
+    $("savedList").innerHTML = "";
+    return null;
+  }
+}
+
+function wireList(container) {
+  container.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    listAction(b.dataset.act, b.dataset.id);
+  });
+}
+wireList($("savedList"));
+wireList($("fullList"));
+
+async function listAction(act, id) {
+  const it = savedData && savedData.items.find((x) => x.id === id);
+  if (act === "open") return openSaved(id);
+  if (act === "export") return exportSavedItem(id);
+  if (act === "rename") return openRename(id, it ? it.title : "");
+  if (act === "delete") return deleteSaved(id, it);
+}
+
+async function openSaved(id) {
+  const ctl = new AbortController();
+  busyShow("Opening comparison…", "Starting…", ctl);
+  try {
+    const { item, state } = await cloud.getComparison(id);
+    const files = await cloud.downloadFiles(item, { signal: ctl.signal, onProgress: busyProgress });
+    $("busyText").textContent = "Loading the drawings…";
+    const dA = await openFile(files.A);
+    let dB;
+    try { dB = await openFile(files.B); } catch (e) { dA.destroy(); throw e; }
+    resetSlots();
+    slots.A = { doc: dA, page: 1 };
+    slots.B = { doc: dB, page: 1 };
+    updateDz("A"); updateDz("B");
+    attachCloud(id);
+    busyHide();
+    await startCompare({ state });
+  } catch (e) {
+    busyHide();
+    if (e.message === "Cancelled.") toast("Cancelled", "", false, 2000);
+    else flash("Couldn't open that comparison", e.message);
+  }
+}
+
+async function exportSavedItem(id) {
+  const ctl = new AbortController();
+  busyShow("Preparing your file…", "Starting…", ctl);
+  try {
+    await cloud.exportSaved(id, { signal: ctl.signal, onProgress: busyProgress });
+    busyHide();
+    toast("Comparison file created", "Look in your Downloads (the Files app on iPad). You can now delete the saved copy to free a slot.", false, 6000);
+  } catch (e) {
+    busyHide();
+    if (e.message === "Cancelled.") toast("Cancelled", "", false, 2000);
+    else flash("Couldn't export", e.message);
+  }
+}
+
+async function deleteSaved(id, it) {
+  const name = it && it.title ? `"${it.title}"` : "this comparison";
+  if (!confirm(`Delete ${name}? This can't be undone. If you may want it later, cancel and use Export first.`)) return;
+  try {
+    await cloud.deleteComparison(id);
+    if (cloudId === id) detachCloud();
+    toast("Deleted", "", false, 2000);
+  } catch (e) { flash("Couldn't delete", e.message); }
+  await refreshSaved();
+  if (fullOpen) await refreshFull();
+}
+
+/* ---------- rename ---------- */
+let renameId = null;
+function openRename(id, current) {
+  renameId = id;
+  $("renameInput").value = current || "";
+  $("renameDlg").classList.remove("hidden");
+  setTimeout(() => { $("renameInput").focus(); $("renameInput").select(); }, 50);
+}
+function closeRename() { renameId = null; $("renameDlg").classList.add("hidden"); }
+async function doRename() {
+  const title = $("renameInput").value.trim();
+  if (!renameId) return;
+  if (!title) { flash("Give it a name", ""); return; }
+  const id = renameId;
+  try {
+    await cloud.renameComparison(id, title);
+    closeRename();
+    await refreshSaved();
+    if (fullOpen) await refreshFull();
+  } catch (e) { flash("Couldn't rename", e.message); }
+}
+$("renameSave").addEventListener("click", doRename);
+$("renameCancel").addEventListener("click", closeRename);
+$("renameInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doRename(); } });
+$("renameDlg").addEventListener("pointerdown", (e) => { if (e.target === $("renameDlg")) closeRename(); });
+
+/* ---------- saving the open comparison ---------- */
+let fullOpen = false, fullReason = "";
+
+function roomFor(d) {
+  const add = (slots.A ? slots.A.doc.file.size : 0) + (slots.B ? slots.B.doc.file.size : 0);
+  return d.slotsUsed < d.limits.maxComparisons && d.usedBytes + add <= d.limits.maxTotalBytes;
+}
+
+function openFull(d, reason) {
+  fullOpen = true;
+  fullReason = reason;
+  $("fullDlg").classList.remove("hidden");
+  applyFull(d);
+}
+function applyFull(d) {
+  savedData = d;
+  renderSavedList($("fullList"), d.items, { compact: true });
+  const room = roomFor(d);
+  $("fullRetry").classList.toggle("hidden", !room);
+  $("fullSub").textContent = room
+    ? "There's room now. Tap Save now to save this comparison."
+    : `${fullReason} Export one to a file if you may want it later, then delete it to make room.`;
+}
+async function refreshFull() {
+  try { applyFull(await cloud.listComparisons()); }
+  catch (e) { flash("Couldn't refresh the list", e.message); }
+}
+function closeFull() { fullOpen = false; $("fullDlg").classList.add("hidden"); }
+$("fullCancel").addEventListener("click", closeFull);
+$("fullRetry").addEventListener("click", () => { closeFull(); saveToCloud(); });
+$("fullDlg").addEventListener("pointerdown", (e) => { if (e.target === $("fullDlg")) closeFull(); });
+
+async function saveToCloud() {
+  if (!cpOn) return;
+  if (cloudId) { if (autosaver) await autosaver.flush(); return; }     // already saved: save pending changes now
+  const A = slots.A.doc.file, B = slots.B.doc.file;
+  let d;
+  try { d = await cloud.listComparisons(); }
+  catch (e) { flash("Couldn't reach your account", e.message); return; }
+  savedData = d;
+  const L = d.limits;
+  const big = [A, B].find((f) => f.size > L.maxFileBytes);
+  if (big) {
+    flash("File too large to save",
+      `"${big.name}" is ${cloud.fmtBytes(big.size)}. Saved drawings can be up to ${cloud.fmtBytes(L.maxFileBytes)} each. You can still export a comparison file instead.`);
+    return;
+  }
+  if (d.slotsUsed >= L.maxComparisons) { openFull(d, `You have ${d.slotsUsed} of ${L.maxComparisons} saved comparisons.`); return; }
+  if (d.usedBytes + A.size + B.size > L.maxTotalBytes) {
+    openFull(d, `Saving this would go over your ${cloud.fmtBytes(L.maxTotalBytes)} of saved storage.`);
+    return;
+  }
+
+  const ctl = new AbortController();
+  busyShow("Saving comparison…", "Starting…", ctl);
+  try {
+    const item = await cloud.saveComparison({ A, B, state: currentState(), signal: ctl.signal, onProgress: busyProgress });
+    busyHide();
+    attachCloud(item.id);
+    toast("Saved to your account", item.title || "", false, 2500);
+  } catch (e) {
+    busyHide();
+    if (e.message === "Cancelled.") toast("Save cancelled", "", false, 2500);
+    else flash("Couldn't save", e.message);
+  }
+}
+$("saveBtn").addEventListener("click", saveToCloud);
+
+/* ---------- single-file export / import (.dhcompare) ---------- */
+$("exFile").addEventListener("click", () => {
+  closeMenu();
+  if (!cpOn) return;
+  try {
+    const st = currentState();
+    const A = slots.A.doc.file, B = slots.B.doc.file;
+    cloud.saveBlob(cloud.buildExport({ A, B, state: st }), cloud.exportFileName(st, A, B));
+    toast("Comparison file created", "Look in your Downloads (the Files app on iPad). Use Open saved file on this page to reopen it.", false, 5000);
+  } catch (e) { flash("Couldn't create the file", e.message); }
+});
+
+async function importFile(file) {
+  showStartMsg(`Reading ${file.name}…`, false);
+  try {
+    const parsed = await cloud.parseExport(file);
+    const dA = await openFile(parsed.A);
+    let dB;
+    try { dB = await openFile(parsed.B); } catch (e) { dA.destroy(); throw e; }
+    resetSlots();
+    slots.A = { doc: dA, page: 1 };
+    slots.B = { doc: dB, page: 1 };
+    updateDz("A"); updateDz("B");
+    showStartMsg("");
+    await startCompare({ state: parsed.state });
+  } catch (e) {
+    showStartMsg(e.message, true);
+  }
+}
+$("fileImport").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (f) importFile(f);
+});
 
 /* ------------------------------------------------------------------ *
  *  Zoom buttons + keyboard
@@ -458,6 +835,9 @@ $("fitBtn").addEventListener("click", () => { withAnim(fitView); scheduleDetail(
 $("zoomLevel").addEventListener("click", () => { withAnim(fitView); scheduleDetail(260); });
 
 document.addEventListener("keydown", (e) => {
+  if (busyActive()) return;
+  if (!$("renameDlg").classList.contains("hidden")) { if (e.key === "Escape") closeRename(); return; }
+  if (!$("fullDlg").classList.contains("hidden")) { if (e.key === "Escape") closeFull(); return; }
   if (!$("noteDlg").classList.contains("hidden")) { if (e.key === "Escape") closeEditor(); return; }
   if (e.key === "Escape") { closeMenu(); if (view.noting) setNoting(false); return; }
   if (!cpOn) return;
@@ -486,7 +866,7 @@ divider.addEventListener("pointerdown", (e) => {
 });
 divider.addEventListener("pointermove", (e) => { if (draggingDivider) moveDivider(e); });
 ["pointerup", "pointercancel", "lostpointercapture"].forEach((t) =>
-  divider.addEventListener(t, () => { draggingDivider = false; }));
+  divider.addEventListener(t, () => { if (draggingDivider) { draggingDivider = false; changed(); } }));
 
 /* ------------------------------------------------------------------ *
  *  Pinch / pan / tap
@@ -698,7 +1078,7 @@ async function focusNote(id) {
 $("clearNotes").addEventListener("click", () => {
   if (!notes.length || !confirm(`Delete all ${notes.length} note${notes.length === 1 ? "" : "s"}?`)) return;
   notes = []; selId = null;
-  persist(); renderNotes(); renderPins();
+  changed(); renderNotes(); renderPins();
 });
 
 /* ---------- note editor ---------- */
@@ -730,22 +1110,22 @@ $("noteSave").addEventListener("click", () => {
     const n = { id: newId(), x: edit.x, y: edit.y, pa: edit.pa, pb: edit.pb, cat, text, t: Date.now() };
     notes.push(n); selId = n.id;
   }
-  closeEditor(); persist(); renderNotes(); renderPins();
+  closeEditor(); changed(); renderNotes(); renderPins();
 });
 $("noteDelete").addEventListener("click", () => {
   if (!edit || !edit.id) return;
   notes = notes.filter((x) => x.id !== edit.id);
   if (selId === edit.id) selId = null;
-  closeEditor(); persist(); renderNotes(); renderPins();
+  closeEditor(); changed(); renderNotes(); renderPins();
 });
 
-/* ---------- saving notes in this browser (per pair of files) ---------- */
+/* ---------- local copy of notes in this browser (only for comparisons not saved to the server) ---------- */
 const LS_INDEX = "dh-compare-index";
 function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
 function stateKey() { return "dh-compare:" + hash([slots.A.doc.fp, slots.B.doc.fp].sort().join("||")); }
 
 function persist() {
-  if (!slots.A || !slots.B) return;
+  if (cloudId || !slots.A || !slots.B) return;
   try {
     const key = stateKey();
     localStorage.setItem(key, JSON.stringify({ title: $("docTitle").value, preparedBy: $("preparedBy").value, notes, t: Date.now() }));
@@ -774,7 +1154,7 @@ let metaTimer = null;
 ["docTitle", "preparedBy"].forEach((id) => $(id).addEventListener("input", () => {
   clearTimeout(metaTimer);
   metaTimer = setTimeout(() => {
-    persist();
+    changed();
     try { localStorage.setItem("dh-compare-by", $("preparedBy").value); } catch (e) {}
   }, 400);
 }));
@@ -1022,4 +1402,5 @@ $("exExcel").addEventListener("click", () => runExport("excel"));
 /* ------------------------------------------------------------------ */
 requireLogin(() => {
   if (!pdfjsLib) showStartMsg("The PDF viewer library didn't load. Images will still work; reload to retry PDFs.", true);
+  refreshSaved();
 });
