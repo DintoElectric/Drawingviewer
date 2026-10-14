@@ -1,0 +1,1025 @@
+import { requireLogin } from "./auth.js";
+
+/* ------------------------------------------------------------------ *
+ *  Compare page: two local drawings (PDF or image), slider/overlay
+ *  compare, pinch/pan zoom, numbered notes, print, and export.
+ *  Nothing is uploaded; files are read in the browser only.
+ *
+ *  Export contract (implemented in compare-export.js):
+ *    exportWord(ctx)  /  exportExcel(ctx)
+ *    ctx = {
+ *      title, preparedBy, date, dateISO, slug, zoneNote, mode,
+ *      fileA: {name, page, pages}, fileB: {name, page, pages},
+ *      notes: [{n, id, cat, text, zone, x, y, pageA, pageB, created}],
+ *      getOverview(maxPx) -> Promise<{data:Uint8Array, w, h}>   // PNG
+ *      getCrops(note)     -> Promise<{a:{data,w,h}, b:{data,w,h}}>
+ *    }
+ * ------------------------------------------------------------------ */
+
+const pdfjsLib = window.pdfjsLib;
+if (pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+document.body.classList.add("viewer-page");
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const dpr = () => Math.min(window.devicePixelRatio || 1, 3);
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const baseName = (n) => String(n || "").replace(/\.[^.]+$/, "");
+
+const viewport = $("viewport");
+const stage = $("stage");
+const divider = $("divider");
+const handle = divider.querySelector(".handle");
+const pinsEl = $("pins");
+const emptyEl = $("empty");
+
+/* ---------- limits (conservative for iPad Safari canvas memory) ---------- */
+const MIN_Z = 0.4, MAX_Z = 12;
+const BASE_MAX_PX = 8e6;
+const DETAIL_MAX_PX = 9e6;
+const PRINT_MAXPX = 8e6;
+const CROP_W = 300, CROP_RATIO = 0.75, CROP_K = 2.4;   // crop region in stage units (stage width = 1000)
+const ZCOLS = 8, ZROWS = 6;
+
+/* ---------- state ---------- */
+const S = { z: 1, tx: 0, ty: 0, vw: 800, vh: 600, W0: 800, H0: 600 };
+const view = { mode: "slider", p: 0.5, opacity: 1, noting: false };
+const slots = { A: null, B: null };      // {doc, page}
+let cpOn = false;
+let notes = [];                          // {id,x,y,pa,pb,cat,text,t}
+let selId = null;
+let edit = null;                         // note (or draft) open in the editor
+
+/* ---------- toast helpers ---------- */
+function toast(title, body, err = true, ms = 4200) {
+  const t = document.createElement("div");
+  t.className = "toast" + (err ? " err" : "");
+  t.innerHTML = `<div><div class="t-title">${esc(title)}</div>${body ? `<div class="t-body">${esc(body)}</div>` : ""}</div>`;
+  document.body.appendChild(t);
+  if (ms) setTimeout(() => t.remove(), ms);
+  return t;
+}
+const flash = (title, body) => toast(title, body, true);
+
+/* ------------------------------------------------------------------ *
+ *  Opening a file (PDF via pdf.js, or an image wrapped to look like a page)
+ * ------------------------------------------------------------------ */
+function imagePage(img) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  return {
+    getViewport({ scale = 1, offsetX = 0, offsetY = 0 } = {}) {
+      return { width: w * scale, height: h * scale, scale, offsetX, offsetY };
+    },
+    render({ canvasContext, viewport: vp }) {
+      let cancelled = false;
+      const promise = Promise.resolve().then(() => {
+        if (cancelled) { const e = new Error("cancelled"); e.name = "RenderingCancelledException"; throw e; }
+        canvasContext.imageSmoothingEnabled = true;
+        canvasContext.imageSmoothingQuality = "high";
+        canvasContext.drawImage(img, vp.offsetX, vp.offsetY, w * vp.scale, h * vp.scale);
+      });
+      return { promise, cancel() { cancelled = true; } };
+    },
+  };
+}
+
+async function openFile(file) {
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+  const fp = `${file.name}|${file.size}|${file.lastModified}`;
+  if (isPdf) {
+    if (!pdfjsLib) throw new Error("The PDF library didn't load. Check your connection and reload.");
+    try {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+      return { name: file.name, fp, numPages: pdf.numPages, getPage: (n) => pdf.getPage(n),
+               destroy() { try { pdf.destroy(); } catch (e) {} } };
+    } catch (e) {
+      if (e && e.name === "PasswordException") throw new Error("That PDF is password-protected.");
+      throw new Error("Couldn't open that PDF.");
+    }
+  }
+  if (!/^image\//.test(file.type) && !/\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(file.name)) {
+    throw new Error("That file type isn't supported. Choose a PDF, JPG or PNG.");
+  }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.src = url;
+  try { await img.decode(); }
+  catch (e) { URL.revokeObjectURL(url); throw new Error("Couldn't read that image. Try a PDF, JPG or PNG."); }
+  const page = imagePage(img);
+  return { name: file.name, fp, numPages: 1, getPage: async () => page, destroy() { URL.revokeObjectURL(url); } };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Layers (same structure as the sheet viewer)
+ * ------------------------------------------------------------------ */
+function makeLayer(canvas, cls, tintCls) {
+  const el = document.createElement("div");
+  el.className = `layer ${cls}`;
+  stage.insertBefore(el, canvas);
+  el.appendChild(canvas);
+  canvas.classList.remove("hidden");
+  const tint = document.createElement("div");
+  tint.className = `tint ${tintCls}`;
+  el.appendChild(tint);
+  return { el, canvas, tint, detail: null, page: null, pw: 0, ph: 0, box: null,
+           dens: 1, baseTask: null, detailTask: null, gen: 0, dgen: 0 };
+}
+const LB = makeLayer($("cvB"), "layer-b", "tint-b");   // Drawing B (newer) underneath
+const LA = makeLayer($("cvA"), "layer-a", "tint-a");   // Drawing A (older) on top, clipped / blended
+stage.classList.add("hidden");
+
+function cancel(t) { try { t && t.cancel(); } catch (e) { /* ignore */ } }
+
+/* ---------- geometry ---------- */
+function measure() {
+  const r = viewport.getBoundingClientRect();
+  S.vw = r.width || 800;
+  S.vh = r.height || 600;
+}
+function computeStage() {
+  const pad = 14;
+  const s = Math.min((S.vw - pad * 2) / LB.pw, (S.vh - pad * 2) / LB.ph);
+  S.W0 = Math.max(50, LB.pw * s);
+  S.H0 = Math.max(50, LB.ph * s);
+  stage.style.width = S.W0 + "px";
+  stage.style.height = S.H0 + "px";
+}
+function boxFor(L) {
+  if (L === LB) return { x: 0, y: 0, w: S.W0, h: S.H0 };
+  const s = Math.min(S.W0 / L.pw, S.H0 / L.ph);   // contain-fit if sheet sizes differ
+  const w = L.pw * s, h = L.ph * s;
+  return { x: (S.W0 - w) / 2, y: (S.H0 - h) / 2, w, h };
+}
+function clampT() {
+  const cw = S.W0 * S.z, ch = S.H0 * S.z, m = 40;
+  S.tx = cw + 2 * m <= S.vw ? (S.vw - cw) / 2 : clamp(S.tx, S.vw - cw - m, m);
+  S.ty = ch + 2 * m <= S.vh ? (S.vh - ch) / 2 : clamp(S.ty, S.vh - ch - m, m);
+}
+function applyTransform() {
+  stage.style.transform = `translate(${S.tx}px, ${S.ty}px) scale(${S.z})`;
+  stage.style.setProperty("--inv", String(1 / S.z));
+  $("zoomLevel").textContent = Math.round(S.z * 100) + "%";
+  positionHandle();
+}
+function positionHandle() {
+  if (view.mode !== "slider") return;
+  handle.style.top = clamp((S.vh / 2 - S.ty) / S.z, 0, S.H0) + "px";
+}
+function zoomAt(z2, cx, cy) {
+  z2 = clamp(z2, MIN_Z, MAX_Z);
+  const px = (cx - S.tx) / S.z, py = (cy - S.ty) / S.z;
+  S.z = z2; S.tx = cx - px * z2; S.ty = cy - py * z2;
+  clampT(); applyTransform();
+}
+function fitView() { S.z = 1; clampT(); applyTransform(); }
+function withAnim(fn) {
+  stage.classList.add("anim"); fn();
+  setTimeout(() => stage.classList.remove("anim"), 230);
+}
+
+/* ---------- rendering ---------- */
+function renderFit(page, canvas) {
+  const v1 = page.getViewport({ scale: 1 });
+  const s = Math.min(canvas.width / v1.width, canvas.height / v1.height);
+  const vp = page.getViewport({
+    scale: s,
+    offsetX: (canvas.width - v1.width * s) / 2,
+    offsetY: (canvas.height - v1.height * s) / 2,
+  });
+  return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp });
+}
+
+async function setLayer(L, doc, pageNum) {
+  L.page = await doc.getPage(clamp(pageNum, 1, doc.numPages));
+  const vp = L.page.getViewport({ scale: 1 });
+  L.pw = vp.width; L.ph = vp.height;
+}
+
+function clearDetail(L) {
+  L.dgen++; cancel(L.detailTask); L.detailTask = null;
+  if (L.detail) { L.detail.remove(); L.detail = null; }
+}
+
+async function renderBase(L) {
+  if (!L.page) return;
+  const my = ++L.gen;
+  cancel(L.baseTask); L.baseTask = null;
+  clearDetail(L);
+  const b = boxFor(L); L.box = b;
+  let dens = Math.min(dpr() * 1.5, Math.sqrt(BASE_MAX_PX / (b.w * b.h)));
+  dens = Math.max(dens, 0.5);
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(b.w * dens));
+  c.height = Math.max(1, Math.round(b.h * dens));
+  c.style.left = b.x + "px"; c.style.top = b.y + "px";
+  c.style.width = b.w + "px"; c.style.height = b.h + "px";
+  L.dens = c.width / b.w;
+  const task = renderFit(L.page, c);
+  L.baseTask = task;
+  try { await task.promise; }
+  catch (e) { if (my !== L.gen || e?.name === "RenderingCancelledException") return; throw e; }
+  if (my !== L.gen) return;
+  L.baseTask = null;
+  L.el.replaceChild(c, L.canvas);   // swap in only when finished, so there's no blank flash
+  L.canvas = c;
+}
+
+let detailTimer = null;
+function scheduleDetail(delay = 170) {
+  clearTimeout(detailTimer);
+  detailTimer = setTimeout(() => { renderDetail(LB); renderDetail(LA); }, delay);
+}
+
+// Re-renders just the visible region at full screen resolution so zoomed-in text stays sharp.
+async function renderDetail(L) {
+  if (!L.page || !L.box) return;
+  const k = S.z * dpr();
+  if (k <= L.dens * 1.1) { clearDetail(L); return; }
+  const my = ++L.dgen;
+  cancel(L.detailTask);
+  const b = L.box, pad = 0.1;
+  const vx0 = -S.tx / S.z, vy0 = -S.ty / S.z;
+  const vx1 = (S.vw - S.tx) / S.z, vy1 = (S.vh - S.ty) / S.z;
+  const w0 = vx1 - vx0, h0 = vy1 - vy0;
+  const x0 = Math.max(b.x, vx0 - w0 * pad), y0 = Math.max(b.y, vy0 - h0 * pad);
+  const x1 = Math.min(b.x + b.w, vx1 + w0 * pad), y1 = Math.min(b.y + b.h, vy1 + h0 * pad);
+  const rw = x1 - x0, rh = y1 - y0;
+  if (rw < 2 || rh < 2) { clearDetail(L); return; }
+  let kk = k;
+  const area = rw * kk * rh * kk;
+  if (area > DETAIL_MAX_PX) kk *= Math.sqrt(DETAIL_MAX_PX / area);
+  if (kk <= L.dens * 1.05) { clearDetail(L); return; }
+  const d = document.createElement("canvas");
+  d.width = Math.max(1, Math.round(rw * kk));
+  d.height = Math.max(1, Math.round(rh * kk));
+  const ke = d.width / rw;
+  d.style.left = x0 + "px"; d.style.top = y0 + "px";
+  d.style.width = rw + "px"; d.style.height = rh + "px";
+  const vp = L.page.getViewport({
+    scale: (b.w / L.pw) * ke,
+    offsetX: -(x0 - b.x) * ke,
+    offsetY: -(y0 - b.y) * ke,
+  });
+  const task = L.page.render({ canvasContext: d.getContext("2d"), viewport: vp });
+  L.detailTask = task;
+  try { await task.promise; }
+  catch (e) { return; }
+  if (my !== L.dgen) return;
+  L.detailTask = null;
+  L.el.insertBefore(d, L.tint);
+  if (L.detail) L.detail.remove();
+  L.detail = d;
+}
+
+/* ---------- mounting both drawings ---------- */
+let mountSeq = 0;
+async function mountBoth(keep) {
+  const my = ++mountSeq;
+  try {
+    await setLayer(LB, slots.B.doc, slots.B.page);
+    await setLayer(LA, slots.A.doc, slots.A.page);
+  } catch (e) {
+    stage.classList.add("hidden");
+    emptyEl.classList.remove("hidden");
+    emptyEl.innerHTML = `<div>Couldn't show these drawings.<br><span class="muted">${esc(e.message)}</span></div>`;
+    return;
+  }
+  if (my !== mountSeq) return;
+  const first = stage.classList.contains("hidden");
+  const oW = S.W0, oH = S.H0;
+  measure(); computeStage();
+  if (!keep || first || Math.abs(oW - S.W0) > 1 || Math.abs(oH - S.H0) > 1) fitView();
+  else { clampT(); applyTransform(); }
+  stage.classList.remove("hidden");
+  emptyEl.classList.add("hidden");
+  applyMode();
+  renderPins();
+  await Promise.all([renderBase(LB), renderBase(LA)]);
+  if (my !== mountSeq) return;
+  scheduleDetail(60);
+}
+
+/* ------------------------------------------------------------------ *
+ *  UI sync
+ * ------------------------------------------------------------------ */
+function syncChrome() {
+  for (const w of ["A", "B"]) {
+    const s = slots[w];
+    if (!s) continue;
+    $("name" + w).textContent = s.doc.name;
+    $("name" + w).title = s.doc.name;
+    $("pages" + w).classList.toggle("hidden", s.doc.numPages < 2);
+    $("pageInd" + w).textContent = `${s.page} / ${s.doc.numPages}`;
+    $("pagePrev" + w).disabled = s.page <= 1;
+    $("pageNext" + w).disabled = s.page >= s.doc.numPages;
+  }
+  if (slots.A) $("lblA").textContent = `A · ${slots.A.doc.name}`;
+  if (slots.B) $("lblB").textContent = `B · ${slots.B.doc.name}`;
+}
+
+function applyMode() {
+  const slider = view.mode === "slider";
+  stage.classList.add("cmp-on");
+  stage.classList.toggle("mode-slider", slider);
+  stage.classList.toggle("mode-overlay", !slider);
+  divider.classList.toggle("hidden", !slider);
+  $("modeSlider").classList.toggle("on", slider);
+  $("modeOverlay").classList.toggle("on", !slider);
+  $("opacityWrap").classList.toggle("hidden", slider);
+  $("legend").classList.toggle("hidden", slider);
+  if (slider) applySlider();
+  else { LA.el.style.clipPath = ""; LA.el.style.webkitClipPath = ""; }
+  LA.el.style.opacity = slider ? "" : String(view.opacity);
+}
+function applySlider() {
+  const pct = view.p * 100;
+  divider.style.left = pct + "%";
+  const clip = `inset(0 ${100 - pct}% 0 0)`;
+  LA.el.style.clipPath = clip; LA.el.style.webkitClipPath = clip;
+  positionHandle();
+}
+
+$("modeSlider").addEventListener("click", () => { view.mode = "slider"; applyMode(); });
+$("modeOverlay").addEventListener("click", () => { view.mode = "overlay"; applyMode(); });
+$("opacity").addEventListener("input", (e) => {
+  view.opacity = parseInt(e.target.value, 10) / 100;
+  LA.el.style.opacity = String(view.opacity);
+});
+
+/* ------------------------------------------------------------------ *
+ *  Start screen + choosing / replacing / swapping files
+ * ------------------------------------------------------------------ */
+function showStartMsg(msg, isErr) {
+  const el = $("startMsg");
+  if (!msg) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  el.classList.toggle("err", !!isErr);
+  el.textContent = msg;
+}
+
+function updateDz(w) {
+  const s = slots[w];
+  $("dzName" + w).textContent = s ? s.doc.name : "Tap to choose, or drop a file here";
+  $("dz" + w).classList.toggle("has-file", !!s);
+}
+
+async function setFile(which, file) {
+  if (!file) return;
+  showStartMsg(`Reading ${file.name}…`, false);
+  let doc;
+  try { doc = await openFile(file); }
+  catch (e) {
+    if (cpOn) flash("Couldn't open that file", e.message);
+    else showStartMsg(e.message, true);
+    return;
+  }
+  if (slots[which]) { try { slots[which].doc.destroy(); } catch (e) {} }
+  slots[which] = { doc, page: 1 };
+  showStartMsg("");
+  updateDz(which);
+  if (cpOn) {
+    selId = null;
+    loadState();            // a different pair of files gets its own notes
+    syncChrome(); renderNotes();
+    await mountBoth(false);
+  } else if (slots.A && slots.B) {
+    startCompare();
+  }
+}
+
+["A", "B"].forEach((w) => {
+  const dz = $("dz" + w);
+  ["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
+  ["dragleave", "drop"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
+  dz.addEventListener("drop", (e) => { const f = e.dataTransfer?.files?.[0]; if (f) setFile(w, f); });
+  $("file" + w).addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) setFile(w, f); });
+  $("replace" + w).addEventListener("click", () => $("file" + w).click());
+  $("pagePrev" + w).addEventListener("click", () => gotoPage(w, slots[w].page - 1));
+  $("pageNext" + w).addEventListener("click", () => gotoPage(w, slots[w].page + 1));
+});
+
+async function gotoPage(w, n) {
+  const s = slots[w];
+  n = clamp(n, 1, s.doc.numPages);
+  if (n === s.page) return;
+  s.page = n;
+  syncChrome(); renderNotes();
+  await mountBoth(true);
+}
+
+async function swapAB() {
+  [slots.A, slots.B] = [slots.B, slots.A];
+  notes.forEach((n) => { const t = n.pa; n.pa = n.pb; n.pb = t; });
+  persist(); syncChrome(); renderNotes();
+  await mountBoth(false);
+}
+$("swapBtn").addEventListener("click", swapAB);
+
+async function startCompare() {
+  cpOn = true;
+  $("startScreen").classList.add("hidden");
+  $("cpApp").classList.remove("hidden");
+  $("newBtn").classList.remove("hidden");
+  loadState();
+  syncChrome(); renderNotes();
+  await nextFrame();
+  await mountBoth(false);
+}
+
+function startOver() {
+  persist();
+  cpOn = false;
+  mountSeq++;
+  setNoting(false);
+  closeEditor();
+  for (const L of [LA, LB]) { cancel(L.baseTask); clearDetail(L); L.page = null; }
+  for (const w of ["A", "B"]) { if (slots[w]) { try { slots[w].doc.destroy(); } catch (e) {} } slots[w] = null; updateDz(w); }
+  notes = []; selId = null;
+  stage.classList.add("hidden");
+  $("cpApp").classList.add("hidden");
+  $("newBtn").classList.add("hidden");
+  $("startScreen").classList.remove("hidden");
+  showStartMsg("");
+}
+$("newBtn").addEventListener("click", startOver);
+
+/* ------------------------------------------------------------------ *
+ *  Zoom buttons + keyboard
+ * ------------------------------------------------------------------ */
+$("zoomIn").addEventListener("click", () => { withAnim(() => zoomAt(S.z * 1.4, S.vw / 2, S.vh / 2)); scheduleDetail(260); });
+$("zoomOut").addEventListener("click", () => { withAnim(() => zoomAt(S.z / 1.4, S.vw / 2, S.vh / 2)); scheduleDetail(260); });
+$("fitBtn").addEventListener("click", () => { withAnim(fitView); scheduleDetail(260); });
+$("zoomLevel").addEventListener("click", () => { withAnim(fitView); scheduleDetail(260); });
+
+document.addEventListener("keydown", (e) => {
+  if (!$("noteDlg").classList.contains("hidden")) { if (e.key === "Escape") closeEditor(); return; }
+  if (e.key === "Escape") { closeMenu(); if (view.noting) setNoting(false); return; }
+  if (!cpOn) return;
+  if (e.target.matches && e.target.matches("input,select,textarea")) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); doPrint(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "+" || e.key === "=") { withAnim(() => zoomAt(S.z * 1.25, S.vw / 2, S.vh / 2)); scheduleDetail(260); }
+  else if (e.key === "-") { withAnim(() => zoomAt(S.z / 1.25, S.vw / 2, S.vh / 2)); scheduleDetail(260); }
+  else if (e.key === "0") { withAnim(fitView); scheduleDetail(260); }
+});
+
+/* ------------------------------------------------------------------ *
+ *  Slider divider drag
+ * ------------------------------------------------------------------ */
+let draggingDivider = false;
+function moveDivider(e) {
+  const r = viewport.getBoundingClientRect();
+  view.p = clamp((e.clientX - r.left - S.tx) / S.z / S.W0, 0, 1);
+  applySlider();
+}
+divider.addEventListener("pointerdown", (e) => {
+  e.preventDefault(); e.stopPropagation();
+  draggingDivider = true;
+  try { divider.setPointerCapture(e.pointerId); } catch (err) {}
+  moveDivider(e);
+});
+divider.addEventListener("pointermove", (e) => { if (draggingDivider) moveDivider(e); });
+["pointerup", "pointercancel", "lostpointercapture"].forEach((t) =>
+  divider.addEventListener(t, () => { draggingDivider = false; }));
+
+/* ------------------------------------------------------------------ *
+ *  Pinch / pan / tap
+ * ------------------------------------------------------------------ */
+const ptrs = new Map();
+let g = null;
+let lastTap = null;
+
+function relPos(e) {
+  const r = viewport.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function beginGesture() {
+  const pts = [...ptrs.values()];
+  if (pts.length === 1) {
+    g = { type: "pan", sx: pts[0].x, sy: pts[0].y, tx0: S.tx, ty0: S.ty, moved: 0, t0: performance.now(), multi: false };
+  } else if (pts.length === 2) {
+    const [a, b] = pts;
+    g = { type: "pinch", d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+          mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, z0: S.z, tx0: S.tx, ty0: S.ty };
+  }
+}
+
+// Single tap: open a pin, drop a new note (in note mode), or (double-tap) zoom.
+function onTap(x, y) {
+  const hit = pinAt(x, y);
+  if (hit) { selId = hit.id; renderPins(); renderNotes(); openEditor(hit); return; }
+  if (view.noting) {
+    const fx = (x - S.tx) / (S.z * S.W0), fy = (y - S.ty) / (S.z * S.H0);
+    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+    openEditor({ id: null, x: fx, y: fy, cat: "Changed", text: "", pa: slots.A.page, pb: slots.B.page });
+    return;
+  }
+  const now = performance.now();
+  if (lastTap && now - lastTap.t < 320 && Math.hypot(x - lastTap.x, y - lastTap.y) < 40) {
+    lastTap = null;
+    withAnim(() => { if (S.z > 1.6) fitView(); else zoomAt(2.5, x, y); });
+    scheduleDetail(260);
+  } else {
+    lastTap = { t: now, x, y };
+  }
+}
+
+viewport.addEventListener("pointerdown", (e) => {
+  if (draggingDivider || !cpOn) return;
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  if (ptrs.size >= 2) return;
+  try { viewport.setPointerCapture(e.pointerId); } catch (err) {}
+  ptrs.set(e.pointerId, relPos(e));
+  beginGesture();
+  viewport.classList.add("grabbing");
+});
+
+viewport.addEventListener("pointermove", (e) => {
+  const p = ptrs.get(e.pointerId);
+  if (!p || !g) return;
+  Object.assign(p, relPos(e));
+  if (g.type === "pan" && ptrs.size === 1) {
+    const dx = p.x - g.sx, dy = p.y - g.sy;
+    g.moved = Math.max(g.moved, Math.hypot(dx, dy));
+    S.tx = g.tx0 + dx; S.ty = g.ty0 + dy;
+    clampT(); applyTransform();
+  } else if (g.type === "pinch" && ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const z2 = clamp(g.z0 * d / g.d0, MIN_Z, MAX_Z);
+    const px = (g.mx - g.tx0) / g.z0, py = (g.my - g.ty0) / g.z0;
+    S.z = z2; S.tx = mx - px * z2; S.ty = my - py * z2;
+    clampT(); applyTransform();
+  }
+});
+
+function endPointer(e) {
+  if (!ptrs.has(e.pointerId)) return;
+  const was = ptrs.size;
+  ptrs.delete(e.pointerId);
+  if (g && g.type === "pan" && was === 1) {
+    const dt = performance.now() - g.t0;
+    if (!g.multi && g.moved < 8 && dt < 400 && e.type === "pointerup") onTap(g.sx, g.sy);
+    g = null;
+    scheduleDetail();
+  } else if (g && g.type === "pinch") {
+    if (ptrs.size === 1) {
+      const p = [...ptrs.values()][0];
+      g = { type: "pan", sx: p.x, sy: p.y, tx0: S.tx, ty0: S.ty, moved: 99, t0: 0, multi: true };
+    } else g = null;
+    scheduleDetail();
+  }
+  if (ptrs.size === 0) viewport.classList.remove("grabbing");
+}
+["pointerup", "pointercancel", "lostpointercapture"].forEach((t) => viewport.addEventListener(t, endPointer));
+
+viewport.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  if (!cpOn) return;
+  const { x, y } = relPos(e);
+  const mul = e.deltaMode === 1 ? 16 : 1;
+  const dx = e.deltaX * mul, dy = e.deltaY * mul;
+  if (e.ctrlKey || e.metaKey) zoomAt(S.z * Math.exp(-clamp(dy, -30, 30) * 0.01), x, y);
+  else { S.tx -= dx; S.ty -= dy; clampT(); applyTransform(); }
+  scheduleDetail();
+}, { passive: false });
+
+let gz0 = 1;
+viewport.addEventListener("gesturestart", (e) => { e.preventDefault(); gz0 = S.z; });
+viewport.addEventListener("gesturechange", (e) => {
+  e.preventDefault();
+  if (ptrs.size) return;
+  const r = viewport.getBoundingClientRect();
+  zoomAt(gz0 * e.scale, e.clientX - r.left, e.clientY - r.top);
+});
+viewport.addEventListener("gestureend", (e) => { e.preventDefault(); scheduleDetail(); });
+viewport.addEventListener("dblclick", (e) => e.preventDefault());
+
+let resizeTimer = null;
+new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(onResize, 120); }).observe(viewport);
+async function onResize() {
+  if (!cpOn || !LB.page) return;
+  const r = viewport.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return;
+  if (Math.abs(S.vw - r.width) < 1 && Math.abs(S.vh - r.height) < 1) return;
+  await mountBoth(false);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Notes
+ * ------------------------------------------------------------------ */
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const onThisView = (n) => slots.A && slots.B && n.pa === slots.A.page && n.pb === slots.B.page;
+
+function zoneOf(x, y) {
+  const c = clamp(Math.floor(x * ZCOLS) + 1, 1, ZCOLS);
+  const r = clamp(Math.floor(y * ZROWS), 0, ZROWS - 1);
+  return String.fromCharCode(65 + r) + "-" + c;
+}
+const ZONE_NOTE = `Zone = row letter (A–${String.fromCharCode(64 + ZROWS)}, top to bottom) and column number (1–${ZCOLS}, left to right) on Drawing B.`;
+
+function setNoting(on) {
+  view.noting = on;
+  $("noteBtn").setAttribute("aria-pressed", String(on));
+  $("noteBtn").classList.toggle("on", on);
+  $("noteBanner").classList.toggle("hidden", !on);
+  viewport.classList.toggle("noting", on);
+}
+$("noteBtn").addEventListener("click", () => setNoting(!view.noting));
+$("notesToggle").addEventListener("click", () => $("notesPanel").classList.toggle("open"));
+
+function renderPins() {
+  pinsEl.innerHTML = notes.map((n, i) => onThisView(n)
+    ? `<div class="pin cat-${n.cat.toLowerCase()}${n.id === selId ? " sel" : ""}" data-id="${n.id}" style="left:${n.x * 100}%;top:${n.y * 100}%">${i + 1}</div>`
+    : "").join("");
+}
+
+function pinAt(x, y) {
+  let best = null, bd = 26;
+  for (const n of notes) {
+    if (!onThisView(n)) continue;
+    const d = Math.hypot(S.tx + n.x * S.W0 * S.z - x, S.ty + n.y * S.H0 * S.z - y);
+    if (d < bd) { bd = d; best = n; }
+  }
+  return best;
+}
+
+function renderNotes() {
+  const multi = slots.A && slots.B && (slots.A.doc.numPages > 1 || slots.B.doc.numPages > 1);
+  $("notesToggleLabel").textContent = `Notes (${notes.length})`;
+  $("noteEmpty").classList.toggle("hidden", notes.length > 0);
+  $("clearNotes").classList.toggle("hidden", notes.length === 0);
+  $("noteList").innerHTML = notes.map((n, i) => `
+    <div class="np-item cat-${n.cat.toLowerCase()}${n.id === selId ? " sel" : ""}${onThisView(n) ? "" : " off"}" data-id="${n.id}">
+      <span class="np-n">${i + 1}</span>
+      <div class="np-body">
+        <div class="np-top"><span class="np-cat">${esc(n.cat)}</span><span class="np-where">Zone ${zoneOf(n.x, n.y)}${multi ? ` · A p.${n.pa} / B p.${n.pb}` : ""}</span></div>
+        <div class="np-text">${n.text ? esc(n.text) : '<i class="muted">No text</i>'}</div>
+      </div>
+      <button class="np-edit" data-edit="${n.id}" aria-label="Edit note ${i + 1}"><i class="ph ph-pencil-simple"></i></button>
+    </div>`).join("");
+}
+
+$("noteList").addEventListener("click", (e) => {
+  const ed = e.target.closest("[data-edit]");
+  if (ed) { const n = notes.find((x) => x.id === ed.dataset.edit); if (n) openEditor(n); return; }
+  const it = e.target.closest(".np-item");
+  if (it) focusNote(it.dataset.id);
+});
+
+async function focusNote(id) {
+  const n = notes.find((x) => x.id === id);
+  if (!n) return;
+  selId = id;
+  if (!onThisView(n)) {
+    slots.A.page = n.pa; slots.B.page = n.pb;
+    syncChrome();
+    await mountBoth(true);
+  }
+  const z = Math.max(S.z, 2);
+  withAnim(() => {
+    S.z = z;
+    S.tx = S.vw / 2 - n.x * S.W0 * z;
+    S.ty = S.vh / 2 - n.y * S.H0 * z;
+    clampT(); applyTransform();
+  });
+  scheduleDetail(260);
+  renderPins(); renderNotes();
+  $("notesPanel").classList.remove("open");
+}
+
+$("clearNotes").addEventListener("click", () => {
+  if (!notes.length || !confirm(`Delete all ${notes.length} note${notes.length === 1 ? "" : "s"}?`)) return;
+  notes = []; selId = null;
+  persist(); renderNotes(); renderPins();
+});
+
+/* ---------- note editor ---------- */
+function openEditor(n) {
+  edit = n;
+  const idx = n.id ? notes.findIndex((x) => x.id === n.id) : -1;
+  $("noteDlgTitle").textContent = n.id ? `Note ${idx + 1}` : "New note";
+  const multi = slots.A.doc.numPages > 1 || slots.B.doc.numPages > 1;
+  $("noteDlgSub").textContent = `Zone ${zoneOf(n.x, n.y)}${multi ? ` · A p.${n.pa} / B p.${n.pb}` : ""}`;
+  $("noteCat").value = n.cat;
+  $("noteText").value = n.text;
+  $("noteDelete").classList.toggle("hidden", !n.id);
+  $("noteDlg").classList.remove("hidden");
+  setTimeout(() => $("noteText").focus(), 50);
+}
+function closeEditor() {
+  edit = null;
+  $("noteDlg").classList.add("hidden");
+}
+$("noteCancel").addEventListener("click", closeEditor);
+$("noteDlg").addEventListener("pointerdown", (e) => { if (e.target === $("noteDlg")) closeEditor(); });
+$("noteSave").addEventListener("click", () => {
+  if (!edit) return;
+  const cat = $("noteCat").value, text = $("noteText").value.trim();
+  if (edit.id) {
+    const n = notes.find((x) => x.id === edit.id);
+    if (n) { n.cat = cat; n.text = text; }
+  } else {
+    const n = { id: newId(), x: edit.x, y: edit.y, pa: edit.pa, pb: edit.pb, cat, text, t: Date.now() };
+    notes.push(n); selId = n.id;
+  }
+  closeEditor(); persist(); renderNotes(); renderPins();
+});
+$("noteDelete").addEventListener("click", () => {
+  if (!edit || !edit.id) return;
+  notes = notes.filter((x) => x.id !== edit.id);
+  if (selId === edit.id) selId = null;
+  closeEditor(); persist(); renderNotes(); renderPins();
+});
+
+/* ---------- saving notes in this browser (per pair of files) ---------- */
+const LS_INDEX = "dh-compare-index";
+function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+function stateKey() { return "dh-compare:" + hash([slots.A.doc.fp, slots.B.doc.fp].sort().join("||")); }
+
+function persist() {
+  if (!slots.A || !slots.B) return;
+  try {
+    const key = stateKey();
+    localStorage.setItem(key, JSON.stringify({ title: $("docTitle").value, preparedBy: $("preparedBy").value, notes, t: Date.now() }));
+    let idx = JSON.parse(localStorage.getItem(LS_INDEX) || "[]").filter((k) => k !== key);
+    idx.push(key);
+    while (idx.length > 25) localStorage.removeItem(idx.shift());
+    localStorage.setItem(LS_INDEX, JSON.stringify(idx));
+  } catch (e) { /* storage full or blocked: notes still work for this session */ }
+}
+function loadState() {
+  notes = [];
+  let title = "", by = "";
+  try {
+    const raw = localStorage.getItem(stateKey());
+    if (raw) {
+      const d = JSON.parse(raw);
+      title = d.title || ""; by = d.preparedBy || "";
+      if (Array.isArray(d.notes)) notes = d.notes.filter((n) => n && typeof n.x === "number" && typeof n.y === "number" && n.cat);
+    }
+  } catch (e) { /* ignore */ }
+  if (!by) { try { by = localStorage.getItem("dh-compare-by") || ""; } catch (e) {} }
+  $("docTitle").value = title;
+  $("preparedBy").value = by;
+}
+let metaTimer = null;
+["docTitle", "preparedBy"].forEach((id) => $(id).addEventListener("input", () => {
+  clearTimeout(metaTimer);
+  metaTimer = setTimeout(() => {
+    persist();
+    try { localStorage.setItem("dh-compare-by", $("preparedBy").value); } catch (e) {}
+  }, 400);
+}));
+
+/* ------------------------------------------------------------------ *
+ *  Rendering the overview + before/after crops (print + export)
+ * ------------------------------------------------------------------ */
+const canvasBlob = (c) => new Promise((res, rej) =>
+  c.toBlob((b) => (b ? res(b) : rej(new Error("Couldn't build the image"))), "image/png"));
+async function canvasBytes(c) {
+  const b = await canvasBlob(c);
+  const out = { data: new Uint8Array(await b.arrayBuffer()), w: c.width, h: c.height };
+  c.width = c.height = 0;
+  return out;
+}
+
+function tintCanvas(c, color) {
+  const x = c.getContext("2d");
+  x.globalCompositeOperation = "lighten";
+  x.fillStyle = color;
+  x.fillRect(0, 0, c.width, c.height);
+  x.globalCompositeOperation = "source-over";
+}
+
+function drawPins(ctx, W, H) {
+  const r = Math.max(14, W / 100);
+  ctx.save();
+  ctx.font = `700 ${Math.round(r * 1.15)}px Arial, sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  notes.forEach((n, i) => {
+    if (!onThisView(n)) return;
+    const cx = n.x * W, cy = n.y * H;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#5b3fd6"; ctx.fill();
+    ctx.lineWidth = Math.max(2, r / 6); ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.fillText(String(i + 1), cx, cy + 1);
+  });
+  ctx.restore();
+}
+
+// Current compare view (with note pins) as one image.
+async function buildOverview(maxPx) {
+  let s = Math.min(Math.sqrt(maxPx / (LB.pw * LB.ph)), 4.2);
+  s = Math.min(s, 7000 / Math.max(LB.pw, LB.ph));
+  const W = Math.max(1, Math.round(LB.pw * s)), H = Math.max(1, Math.round(LB.ph * s));
+  const out = document.createElement("canvas");
+  out.width = W; out.height = H;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  await renderFit(LB.page, out).promise;
+
+  const tmp = document.createElement("canvas");
+  tmp.width = W; tmp.height = H;
+  await renderFit(LA.page, tmp).promise;
+  if (view.mode === "overlay") {
+    tintCanvas(out, "#00b7d9");
+    tintCanvas(tmp, "#e5342a");
+    ctx.globalCompositeOperation = "multiply";
+    ctx.globalAlpha = view.opacity;
+    ctx.drawImage(tmp, 0, 0);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+  } else {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, W * view.p, H); ctx.clip();
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(tmp, 0, 0);
+    ctx.restore();
+    const lw = Math.max(3, W / 900);
+    ctx.fillStyle = "#7c6ff0";
+    ctx.fillRect(W * view.p - lw / 2, 0, lw, H);
+  }
+  tmp.width = tmp.height = 0;
+  drawPins(ctx, W, H);
+  return out;
+}
+
+// Side-by-side crops of the area around one note, from both drawings.
+async function renderCrops(n) {
+  const [pB, pA] = await Promise.all([slots.B.doc.getPage(n.pb), slots.A.doc.getPage(n.pa)]);
+  const vB = pB.getViewport({ scale: 1 }), vA = pA.getViewport({ scale: 1 });
+  const W0 = 1000, H0 = 1000 * vB.height / vB.width;
+  const cw = Math.min(CROP_W, W0), ch = Math.min(cw * CROP_RATIO, H0);
+  const rx = clamp(n.x * W0 - cw / 2, 0, W0 - cw), ry = clamp(n.y * H0 - ch / 2, 0, H0 - ch);
+  const k = CROP_K;
+  const sA = Math.min(W0 / vA.width, H0 / vA.height);
+  const boxA = { x: (W0 - vA.width * sA) / 2, y: (H0 - vA.height * sA) / 2, w: vA.width * sA };
+  const boxB = { x: 0, y: 0, w: W0 };
+
+  async function one(page, v, box) {
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(cw * k)); c.height = Math.max(1, Math.round(ch * k));
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    const vp = page.getViewport({ scale: (box.w / v.width) * k, offsetX: -(rx - box.x) * k, offsetY: -(ry - box.y) * k });
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    ctx.beginPath();
+    ctx.arc((n.x * W0 - rx) * k, (n.y * H0 - ry) * k, 12 * k, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(3, 1.2 * k); ctx.strokeStyle = "#d9261c"; ctx.stroke();
+    return c;
+  }
+  const a = await one(pA, vA, boxA);
+  const b = await one(pB, vB, boxB);
+  return { a, b };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Print
+ * ------------------------------------------------------------------ */
+let printUrls = [];
+const titleOrDefault = () =>
+  $("docTitle").value.trim() || `${baseName(slots.A.doc.name)} vs ${baseName(slots.B.doc.name)}`;
+
+async function doPrint() {
+  if (!cpOn || !LB.page || !LA.page) return;
+  const btn = $("printBtn"), label = btn.querySelector("span");
+  const prev = label ? label.textContent : "";
+  btn.disabled = true;
+  if (label) label.textContent = "Preparing…";
+  const urls = [];
+  try {
+    const canvas = await buildOverview(PRINT_MAXPX);
+    const landscape = canvas.width >= canvas.height;
+    const ovUrl = URL.createObjectURL(await canvasBlob(canvas));
+    canvas.width = canvas.height = 0;
+    urls.push(ovUrl);
+
+    const rows = [];
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      const { a, b } = await renderCrops(n);
+      const ua = URL.createObjectURL(await canvasBlob(a)); a.width = a.height = 0;
+      const ub = URL.createObjectURL(await canvasBlob(b)); b.width = b.height = 0;
+      urls.push(ua, ub);
+      rows.push(`<tr>
+        <td class="pn-n">${i + 1}</td>
+        <td class="pn-cat">${esc(n.cat)}</td>
+        <td class="pn-zone">${zoneOf(n.x, n.y)}<span>A p.${n.pa} · B p.${n.pb}</span></td>
+        <td class="pn-text">${n.text ? esc(n.text) : ""}</td>
+        <td class="pn-img"><img src="${ua}" alt=""></td>
+        <td class="pn-img"><img src="${ub}" alt=""></td></tr>`);
+    }
+
+    const printed = new Date().toLocaleDateString();
+    const modeText = view.mode === "overlay"
+      ? "Overlay: red = only in A, cyan = only in B, dark = unchanged"
+      : "Slider: A is left of the line, B is right of it";
+    const by = $("preparedBy").value.trim();
+    $("printHead").innerHTML =
+      `<div class="ph-title"><b>${esc(titleOrDefault())}</b></div>` +
+      `<div class="ph-sub">A (before): ${esc(slots.A.doc.name)} · B (after): ${esc(slots.B.doc.name)}</div>` +
+      `<div class="ph-sub">${esc(modeText)} · ${by ? "Prepared by " + esc(by) + " · " : ""}Printed ${esc(printed)}</div>`;
+    $("printNotes").innerHTML = notes.length
+      ? `<div class="pn-title">Notes (${notes.length})</div>
+         <table class="pn-table"><thead><tr><th>#</th><th>Type</th><th>Zone</th><th>Note</th><th>Drawing A</th><th>Drawing B</th></tr></thead>
+         <tbody>${rows.join("")}</tbody></table>
+         <div class="pn-foot">${esc(ZONE_NOTE)}</div>`
+      : `<div class="pn-title">No notes recorded</div>`;
+
+    let st = $("pageStyle");
+    if (!st) { st = document.createElement("style"); st.id = "pageStyle"; document.head.appendChild(st); }
+    st.textContent = `@page { size: ${landscape ? "landscape" : "portrait"}; margin: 8mm; }`;
+
+    $("printImg").src = ovUrl;
+    printUrls.forEach((u) => URL.revokeObjectURL(u));
+    printUrls = urls;
+    await Promise.all([...$("printArea").querySelectorAll("img")].map((im) => im.decode().catch(() => {})));
+    window.print();
+  } catch (e) {
+    urls.forEach((u) => URL.revokeObjectURL(u));
+    flash("Couldn't prepare the print", e.message);
+  } finally {
+    btn.disabled = false;
+    if (label) label.textContent = prev;
+  }
+}
+$("printBtn").addEventListener("click", doPrint);
+window.addEventListener("afterprint", () => {
+  setTimeout(() => {
+    printUrls.forEach((u) => URL.revokeObjectURL(u));
+    printUrls = [];
+    $("printImg").removeAttribute("src");
+    $("printNotes").innerHTML = "";
+  }, 1500);
+});
+
+/* ------------------------------------------------------------------ *
+ *  Export (Word / Excel) — builders live in compare-export.js
+ * ------------------------------------------------------------------ */
+function closeMenu() {
+  $("exportMenu").classList.add("hidden");
+  $("exportBtn").setAttribute("aria-expanded", "false");
+}
+$("exportBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = $("exportMenu").classList.toggle("hidden") === false;
+  $("exportBtn").setAttribute("aria-expanded", String(open));
+});
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".cp-menu-wrap")) closeMenu(); });
+
+function buildCtx() {
+  const now = new Date();
+  const title = titleOrDefault();
+  return {
+    title,
+    preparedBy: $("preparedBy").value.trim(),
+    date: now.toLocaleDateString(),
+    dateISO: now.toISOString().slice(0, 10),
+    slug: title.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "Drawing_Comparison",
+    zoneNote: ZONE_NOTE,
+    mode: view.mode,
+    fileA: { name: slots.A.doc.name, page: slots.A.page, pages: slots.A.doc.numPages },
+    fileB: { name: slots.B.doc.name, page: slots.B.page, pages: slots.B.doc.numPages },
+    notes: notes.map((n, i) => ({ n: i + 1, id: n.id, cat: n.cat, text: n.text, zone: zoneOf(n.x, n.y),
+                                   x: n.x, y: n.y, pageA: n.pa, pageB: n.pb, created: n.t })),
+    async getOverview(maxPx = 3e6) { return canvasBytes(await buildOverview(maxPx)); },
+    async getCrops(note) {
+      const src = notes.find((x) => x.id === note.id);
+      const { a, b } = await renderCrops(src);
+      return { a: await canvasBytes(a), b: await canvasBytes(b) };
+    },
+  };
+}
+
+async function runExport(kind) {
+  closeMenu();
+  if (!cpOn) return;
+  if (!notes.length) { flash("No notes to export yet", "Add at least one note first."); return; }
+  const btn = $("exportBtn");
+  btn.disabled = true;
+  const t = toast("Building your file…", "This can take a few seconds.", false, 0);
+  try {
+    const mod = await import("./compare-export.js");
+    const ctx = buildCtx();
+    await (kind === "word" ? mod.exportWord(ctx) : mod.exportExcel(ctx));
+  } catch (e) {
+    flash("Couldn't export", e.message);
+  } finally {
+    t.remove();
+    btn.disabled = false;
+  }
+}
+$("exWord").addEventListener("click", () => runExport("word"));
+$("exExcel").addEventListener("click", () => runExport("excel"));
+
+/* ------------------------------------------------------------------ */
+requireLogin(() => {
+  if (!pdfjsLib) showStartMsg("The PDF viewer library didn't load. Images will still work; reload to retry PDFs.", true);
+});
