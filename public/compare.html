@@ -20,15 +20,15 @@
     <span class="snum">COMPARE</span>
     <span id="pageTitle" style="font:500 15px var(--font-heading)">Compare two drawings</span>
     <div class="spacer"></div>
-    <button class="btn btn-secondary hidden" id="newBtn" style="min-height:36px"><i class="ph ph-arrow-counter-clockwise"></i>Start over</button>
+    <button class="btn btn-secondary hidden" id="newBtn" style="min-height:36px"><i class="ph ph-arrow-counter-clockwise"></i>Close comparison</button>
   </div>
 
-  <!-- STEP 1: choose the two drawings -->
+  <!-- STEP 1: choose two drawings, or reopen a saved comparison -->
   <div class="cp-start" id="startScreen">
     <div class="cp-start-inner">
       <div class="cp-start-head">
         <div class="cp-start-title">Compare two drawings</div>
-        <div class="cp-start-sub">Pick the older and the newer drawing. They stay on this device and are not uploaded or saved to any project.</div>
+        <div class="cp-start-sub">Pick the older and the newer drawing. Nothing is saved to a project, and nothing is stored on the server unless you tap Save.</div>
       </div>
       <div class="cp-drops">
         <label class="cp-drop" id="dzA" for="fileA">
@@ -45,12 +45,30 @@
         </label>
       </div>
       <div class="cp-start-msg hidden" id="startMsg"></div>
+
+      <!-- reopen an exported .dhcompare file -->
+      <div class="cp-import">
+        <label class="btn btn-secondary" for="fileImport" style="min-height:44px"><i class="ph ph-folder-open"></i>Open saved file</label>
+        <span class="cp-import-hint">A <b>.dhcompare</b> file you exported earlier. On iPad, look in Files &rarr; Downloads.</span>
+      </div>
+
+      <!-- comparisons saved to this login -->
+      <section class="cp-saved" id="savedSection">
+        <div class="cp-saved-head">
+          <div class="cp-saved-title">My comparisons</div>
+          <div class="cp-saved-meta" id="savedMeta"></div>
+        </div>
+        <div class="cp-saved-msg" id="savedMsg">Loading your saved comparisons…</div>
+        <div class="cp-saved-list" id="savedList"></div>
+      </section>
     </div>
   </div>
 
   <!-- file pickers (shared by the start screen and the "Replace" buttons) -->
   <input type="file" id="fileA" class="hidden" accept="application/pdf,image/*">
   <input type="file" id="fileB" class="hidden" accept="application/pdf,image/*">
+  <!-- no accept filter on purpose: iPad doesn't recognise the .dhcompare type and would grey the file out -->
+  <input type="file" id="fileImport" class="hidden">
 
   <!-- STEP 2: compare + notes (hidden until both files are loaded) -->
   <div class="cp-app hidden" id="cpApp">
@@ -80,7 +98,7 @@
       </div>
     </div>
 
-    <!-- tools: zoom, compare mode, notes, print / export -->
+    <!-- tools: zoom, compare mode, notes, save, print / export -->
     <div class="vtools" id="vtools">
       <div class="tgroup">
         <button class="tbtn" id="zoomOut" aria-label="Zoom out"><i class="ph ph-magnifying-glass-minus"></i></button>
@@ -104,6 +122,14 @@
       <button class="tbtn tbtn-text" id="noteBtn" aria-pressed="false"><i class="ph ph-map-pin-plus"></i><span>Add note</span></button>
       <button class="tbtn tbtn-text cp-notes-toggle" id="notesToggle"><i class="ph ph-list-bullets"></i><span id="notesToggleLabel">Notes (0)</span></button>
 
+      <div class="vrule"></div>
+
+      <!-- save to this login; shows "Saved" / "Saving…" once a comparison has been saved -->
+      <div class="tgroup cp-save">
+        <button class="tbtn tbtn-text" id="saveBtn"><i class="ph ph-floppy-disk"></i><span id="saveBtnLabel">Save</span></button>
+        <span class="save-status" id="saveStatus" aria-live="polite"></span>
+      </div>
+
       <div class="spacer"></div>
 
       <div class="cp-menu-wrap">
@@ -111,6 +137,8 @@
         <div class="cp-menu hidden" id="exportMenu" role="menu">
           <button class="cp-menu-item" id="exWord" role="menuitem"><i class="ph ph-file-doc"></i>Word document (.docx)</button>
           <button class="cp-menu-item" id="exExcel" role="menuitem"><i class="ph ph-file-xls"></i>Excel spreadsheet (.xlsx)</button>
+          <div class="cp-menu-sep"></div>
+          <button class="cp-menu-item" id="exFile" role="menuitem"><i class="ph ph-package"></i><span>Saved comparison file<small>Both drawings + notes, to reopen later</small></span></button>
         </div>
       </div>
       <button class="tbtn tbtn-text" id="printBtn"><i class="ph ph-printer"></i><span>Print</span></button>
@@ -180,6 +208,57 @@
         <div class="spacer"></div>
         <button class="btn btn-secondary" id="noteCancel" style="min-height:40px">Cancel</button>
         <button class="btn btn-primary" id="noteSave" style="min-height:40px">Save note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- rename a saved comparison -->
+  <div class="backdrop hidden" id="renameDlg">
+    <div class="modal cp-dlg" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
+      <div class="m-head"><div><div class="m-title" id="renameTitle">Rename comparison</div></div></div>
+      <div class="m-body cp-dlg-body">
+        <label class="field-lbl" for="renameInput">Name</label>
+        <input class="input" id="renameInput" type="text" maxlength="140" autocomplete="off">
+      </div>
+      <div class="m-actions">
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="renameCancel" style="min-height:40px">Cancel</button>
+        <button class="btn btn-primary" id="renameSave" style="min-height:40px">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- all saved slots used: choose one to export / delete, then save -->
+  <div class="backdrop hidden" id="fullDlg">
+    <div class="modal cp-dlg cp-dlg-wide" role="dialog" aria-modal="true" aria-labelledby="fullTitle">
+      <div class="m-head">
+        <div>
+          <div class="m-title" id="fullTitle">Your saved comparisons are full</div>
+          <div class="m-sub" id="fullSub"></div>
+        </div>
+      </div>
+      <div class="m-body cp-dlg-body">
+        <div class="cp-saved-list" id="fullList"></div>
+      </div>
+      <div class="m-actions">
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="fullCancel" style="min-height:40px">Cancel</button>
+        <button class="btn btn-primary hidden" id="fullRetry" style="min-height:40px"><i class="ph ph-floppy-disk"></i>Save now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- progress for saving / opening / exporting big files -->
+  <div class="backdrop hidden" id="busy">
+    <div class="modal cp-dlg cp-busy" role="alertdialog" aria-modal="true" aria-labelledby="busyTitle">
+      <div class="m-body cp-dlg-body" style="padding-top:20px">
+        <div class="m-title" id="busyTitle">Working…</div>
+        <div class="m-sub" id="busyText" style="margin-bottom:14px"></div>
+        <div class="cp-bar"><div class="cp-bar-fill" id="busyBar"></div></div>
+      </div>
+      <div class="m-actions">
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="busyCancel" style="min-height:40px">Cancel</button>
       </div>
     </div>
   </div>
