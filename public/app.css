@@ -1,6 +1,7 @@
 /* app.css — layout for the Drawings Hub on top of the Nocturne tokens in
    styles.css. Colors/spacing/radii/type come from the token variables. */
 
+html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--color-bg); color: var(--color-text);
   font-family: var(--font-body); font-size: 15px; -webkit-font-smoothing: antialiased; }
 a { color: var(--color-accent); text-decoration: none; }
@@ -78,17 +79,111 @@ a { color: var(--color-accent); text-decoration: none; }
 .rowlink { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--color-neutral-500); }
 .rowlink a { color: inherit; display: inline-flex; }
 
-/* sheet viewer -------------------------------------------------------- */
-.viewer-header { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px;
+/* sheet viewer: page frame -------------------------------------------- */
+/* body.viewer-page is added by sheet-page.js; it turns the page into a
+   full-height app shell so the drawing fills the screen and nothing scrolls. */
+body.viewer-page { height: 100vh; height: 100dvh; display: flex; flex-direction: column;
+  overflow: hidden; overscroll-behavior: none; }
+
+.viewer-header { flex: none; display: flex; align-items: center; gap: 12px; min-height: 56px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--color-divider); }
 .viewer-header .snum { font-size: 15px; }
 .revpick { display: inline-flex; align-items: center; gap: 6px; background: transparent;
   border: 1px solid var(--color-accent-700); border-radius: 8px; padding: 6px 10px;
   color: var(--color-accent-200); font-size: 12px; cursor: pointer; }
-.vshell { display: flex; min-height: calc(100vh - 56px); }
-.canvas { flex: 1; background: #0d0f1a; display: flex; min-height: 0; }
-.canvas iframe { flex: 1; border: 0; width: 100%; height: 100%; }
-.canvas .empty { margin: auto; text-align: center; color: var(--color-neutral-500); font-size: 14px; }
+
+/* sheet viewer: tool row ---------------------------------------------- */
+.vtools { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+  padding: 7px max(16px, env(safe-area-inset-right)) 7px max(16px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--color-divider); background: var(--color-bg); }
+.tgroup { display: flex; align-items: center; gap: 6px; }
+.tbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 44px; min-height: 44px; padding: 0 12px; background: transparent;
+  border: 1px solid var(--color-neutral-800); border-radius: 8px; color: var(--color-neutral-200);
+  font: 500 13px var(--font-body); cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.tbtn i { font-size: 18px; }
+.tbtn:disabled { opacity: .4; cursor: default; }
+.tbtn.on, .tbtn[aria-pressed="true"] { background: var(--color-accent-900); color: var(--color-accent-100);
+  border-color: var(--color-accent-700); }
+.zoom-level { min-width: 64px; font-variant-numeric: tabular-nums; }
+.page-ind { min-width: 54px; text-align: center; font: 13px ui-monospace, Menlo, monospace; color: var(--color-neutral-300); }
+.cmp-label { font-size: 12px; color: var(--color-neutral-500); }
+.input.cmp-select { width: auto; min-width: 120px; max-width: 180px; min-height: 44px; font-size: 13px; }
+.seg { display: inline-flex; border: 1px solid var(--color-neutral-800); border-radius: 8px; overflow: hidden; }
+.seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 42px; padding: 0 12px;
+  background: transparent; border: 0; color: var(--color-neutral-300); font: 500 13px var(--font-body);
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--color-neutral-800); }
+.seg-btn i { font-size: 17px; }
+.seg-btn.on { background: var(--color-accent-900); color: var(--color-accent-100); }
+.opacity { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-neutral-400); }
+.opacity input[type="range"] { width: 120px; height: 32px; accent-color: var(--color-accent); touch-action: pan-y; }
+@media (hover: hover) { .tbtn:not(:disabled):hover, .seg-btn:hover { color: var(--color-accent-100); } }
+@media (pointer: fine) {
+  .tbtn { min-width: 36px; min-height: 36px; }
+  .seg-btn { min-height: 34px; }
+  .input.cmp-select { min-height: 36px; }
+}
+
+/* sheet viewer: drawing area ------------------------------------------ */
+.vshell { flex: 1; min-height: 0; display: flex; }
+.canvas { flex: 1; min-width: 0; position: relative; overflow: hidden; background: #0d0f1a;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; }
+.canvas.grabbing { cursor: grabbing; }
+
+/* the zoom/pan surface: JS sets its size and transform */
+.stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform;
+  background: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 12px 44px rgba(0,0,0,.55); }
+.stage.anim { transition: transform .2s ease-out; }
+
+/* one layer per revision (white "paper" + the rendered canvas + a color tint) */
+.layer { position: absolute; inset: 0; background: #fff; isolation: isolate; overflow: hidden; }
+.layer canvas { position: absolute; display: block; max-width: none; }
+.layer canvas ~ canvas { background: #fff; }      /* sharp zoomed-in patch covers the base cleanly */
+.tint { position: absolute; inset: 0; display: none; pointer-events: none; mix-blend-mode: lighten; }
+.tint-a { background: #e5342a; }                   /* older rev: red   */
+.tint-b { background: #00b7d9; }                   /* viewed rev: cyan */
+
+/* overlay mode: tint each rev, then multiply them so unchanged lines stay dark */
+.stage.mode-overlay .tint { display: block; }
+.stage.mode-overlay .layer-a { mix-blend-mode: multiply; }
+
+/* slider mode: draggable divider; line + handle stay constant size at any zoom (--inv = 1/zoom) */
+.divider { position: absolute; top: 0; bottom: 0; z-index: 5; cursor: ew-resize; touch-action: none;
+  width: calc(44px * var(--inv, 1)); margin-left: calc(-22px * var(--inv, 1)); }
+.divider::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+  width: calc(2px * var(--inv, 1)); margin-left: calc(-1px * var(--inv, 1));
+  background: var(--color-accent); box-shadow: 0 0 0 calc(1px * var(--inv, 1)) rgba(13,15,26,.45); }
+.handle { position: absolute; left: 50%; width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--color-accent); color: #fff; font-size: 20px;
+  transform: translate(-50%, -50%) scale(var(--inv, 1));
+  box-shadow: 0 0 0 3px rgba(13,15,26,.55), 0 4px 14px rgba(0,0,0,.5); }
+
+/* fixed overlays on the viewport (do not move with zoom/pan) */
+.cmp-chip { position: absolute; top: 12px; z-index: 6; pointer-events: none; padding: 5px 11px; border-radius: 999px;
+  background: rgba(35,37,50,.92); box-shadow: inset 0 0 0 1px var(--color-accent-700);
+  color: var(--color-accent-100); font: 600 12px ui-monospace, Menlo, monospace; }
+.chip-a { left: 12px; }
+.chip-b { right: 12px; }
+.legend { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; pointer-events: none;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; max-width: 94%;
+  padding: 8px 14px; border-radius: 10px; background: rgba(35,37,50,.94);
+  box-shadow: inset 0 0 0 1px var(--color-neutral-800); font-size: 12px; color: var(--color-neutral-300); }
+.legend b { font-weight: 600; color: var(--color-neutral-100, #fff); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.sw-a { background: #e5342a; }
+.sw-b { background: #00b7d9; }
+.sw-k { background: #222; box-shadow: inset 0 0 0 1px #777; }
+
+/* loading / error message centered over the drawing */
+.canvas .empty { position: absolute; inset: 0; z-index: 7; display: grid; place-items: center;
+  text-align: center; color: var(--color-neutral-500); font-size: 14px; pointer-events: none; }
+.loading-pill { padding: 8px 14px; border-radius: 999px; background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-neutral-800); color: var(--color-neutral-300); font-size: 13px; }
+
+/* sheet viewer: revision list ----------------------------------------- */
 .history { width: 300px; flex: none; border-left: 1px solid var(--color-divider); padding: 16px 14px; overflow: auto; }
 .history .h-label { font: 10px ui-monospace, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase;
   color: var(--color-neutral-600); padding: 0 4px 10px; }
@@ -142,4 +237,23 @@ a { color: var(--color-accent); text-decoration: none; }
 .toast .t-title { font: 500 13px var(--font-body); color: var(--color-accent-100); }
 .toast .t-body { font-size: 12px; color: var(--color-neutral-400); margin-top: 2px; }
 
+/* print (sheet viewer) ------------------------------------------------- */
+.print-only { display: none; }
+
+@media (max-width: 1000px) { .history { width: 240px; } }
 @media (max-width: 720px) { .history { display: none; } }
+
+@media print {
+  html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
+  body.viewer-page { display: block !important; }
+  body.viewer-page > *:not(.print-only) { display: none !important; }
+  .print-only { display: flex !important; flex-direction: column; position: fixed; inset: 0;
+    background: #fff; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-head { flex: none; margin-bottom: 3mm; font-family: Inter, Arial, sans-serif; }
+  .ph-title { font-size: 14pt; }
+  .ph-title b { font-weight: 700; }
+  .ph-sub { font-size: 9.5pt; color: #333; margin-top: 1mm; }
+  .ph-warn { display: inline-block; margin-top: 2mm; padding: 1mm 3mm; border: 1.5px solid #b00020;
+    color: #b00020; font-size: 10.5pt; font-weight: 700; }
+  #printImg { flex: 1 1 0; min-height: 0; width: 100%; height: 0; object-fit: contain; object-position: center top; }
+}
