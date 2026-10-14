@@ -411,3 +411,65 @@ body.viewer-page .cp-app { flex: 1; min-height: 0; display: flex; flex-direction
 @media print and (orientation: portrait) {
   .print-only:has(> .print-notes) #printImg { max-height: 225mm; }
 }
+/* ==================================================================
+   COMPARE PAGE: saved comparisons, save status, dialogs, progress
+   (appended to the end of app.css)
+   ================================================================== */
+
+/* ---- "Open saved file" button on the start screen ---------------- */
+.cp-import { display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: 8px 14px; margin-top: 22px; text-align: center; }
+.cp-import-hint { font-size: 12px; color: var(--color-neutral-500); max-width: 360px; }
+.cp-import-hint b { color: var(--color-neutral-300); font-weight: 600; }
+
+/* ---- My comparisons ---------------------------------------------- */
+.cp-saved { margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--color-divider); }
+.cp-saved-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 12px; }
+.cp-saved-title { font: 500 17px var(--font-heading); }
+.cp-saved-meta { font: 12px ui-monospace, Menlo, monospace; color: var(--color-neutral-500); }
+.cp-saved-msg { font-size: 13px; color: var(--color-neutral-500); padding: 6px 2px; }
+.cp-saved-list { display: grid; gap: 10px; }
+
+.sv-item { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 12px;
+  background: var(--color-surface); box-shadow: inset 0 0 0 1px var(--color-neutral-800); }
+.sv-main { flex: 1; min-width: 0; }
+.sv-title { font: 500 15px var(--font-heading); overflow-wrap: anywhere; }
+.sv-files { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin-top: 7px;
+  font: 12px ui-monospace, Menlo, monospace; color: var(--color-neutral-300); }
+.sv-files .cp-chip-tag { width: 18px; height: 18px; border-radius: 4px; font-size: 10px; }
+.sv-fn { max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 8px; }
+.sv-meta { margin-top: 6px; font-size: 12px; color: var(--color-neutral-500); }
+.sv-actions { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.sv-actions .btn { white-space: nowrap; }
+.sv-actions .btn[data-act="rename"],
+.sv-actions .btn[data-act="delete"] { min-width: 44px; padding-left: 0; padding-right: 0; }
+@media (hover: hover) {
+  .sv-actions .btn[data-act="delete"]:hover { color: #ff8a80; }
+}
+@media (max-width: 640px) {
+  .sv-item { flex-direction: column; align-items: stretch; }
+  .sv-actions { justify-content: flex-start; }
+}
+
+/* ---- Save button + status in the tool row ------------------------ */
+.cp-save { gap: 8px; }
+.save-status { font-size: 12px; color: var(--color-neutral-500); white-space: nowrap;
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.save-status.saving { color: var(--color-neutral-400); }
+.save-status.saved { color: var(--color-accent-400); }
+.save-status.error { color: #ff8a80; }
+@media (max-width: 700px) { .save-status { max-width: 120px; } }
+
+/* ---- export menu: divider + two-line item ------------------------ */
+.cp-menu-sep { height: 1px; margin: 6px 4px; background: var(--color-divider); }
+.cp-menu-item span { display: block; line-height: 1.25; }
+.cp-menu-item small { display: block; margin-top: 2px; font: 400 11px var(--font-body); color: var(--color-neutral-500); }
+
+/* ---- dialogs: wide list dialog + progress dialog ----------------- */
+.cp-dlg-wide { width: min(720px, 100%); }
+.cp-dlg-wide .cp-dlg-body { max-height: 56vh; overflow: auto; }
+.cp-busy { width: min(420px, 100%); }
+#busy { z-index: 55; }            /* above other dialogs, below toasts (60) */
+
+.cp-bar { height: 8px; border-radius: 999px; overflow: hidden; background: var(--color-neutral-800); }
+.cp-bar-fill { height: 100%; width: 0; border-radius: 999px; background: var(--color-accent); transition: width .2s ease-out; }
