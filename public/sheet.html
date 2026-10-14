@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Sheet — Drawings Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
@@ -11,6 +11,8 @@
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./app.css">
 <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
+<!-- pdf.js (classic build exposes the global pdfjsLib) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
   <div class="viewer-header">
@@ -22,15 +24,67 @@
     <a class="btn btn-secondary" id="downloadBtn" style="min-height:36px" target="_blank"><i class="ph ph-download-simple"></i>Download</a>
   </div>
 
+  <!-- viewer tools: zoom, pages, compare, print -->
+  <div class="vtools" id="vtools">
+    <div class="tgroup">
+      <button class="tbtn" id="zoomOut" aria-label="Zoom out"><i class="ph ph-magnifying-glass-minus"></i></button>
+      <button class="tbtn tbtn-text zoom-level" id="zoomLevel" title="Reset to 100%">100%</button>
+      <button class="tbtn" id="zoomIn" aria-label="Zoom in"><i class="ph ph-magnifying-glass-plus"></i></button>
+      <button class="tbtn tbtn-text" id="fitBtn"><i class="ph ph-corners-out"></i><span>Fit</span></button>
+    </div>
+
+    <div class="tgroup hidden" id="pageGroup">
+      <button class="tbtn" id="pagePrev" aria-label="Previous page"><i class="ph ph-caret-left"></i></button>
+      <span class="page-ind" id="pageInd">1 / 1</span>
+      <button class="tbtn" id="pageNext" aria-label="Next page"><i class="ph ph-caret-right"></i></button>
+    </div>
+
+    <div class="vrule"></div>
+
+    <button class="tbtn tbtn-text" id="cmpBtn" aria-pressed="false"><i class="ph ph-git-diff"></i><span>Compare</span></button>
+    <div class="tgroup hidden" id="cmpGroup">
+      <label class="cmp-label" for="cmpSelect">with</label>
+      <select class="input cmp-select" id="cmpSelect"></select>
+      <div class="seg" role="group" aria-label="Compare mode">
+        <button class="seg-btn on" id="modeSlider"><i class="ph ph-columns"></i><span>Slider</span></button>
+        <button class="seg-btn" id="modeOverlay"><i class="ph ph-stack"></i><span>Overlay</span></button>
+      </div>
+      <label class="opacity hidden" id="opacityWrap"><span>Old rev</span><input type="range" id="opacity" min="0" max="100" value="100"></label>
+    </div>
+
+    <div class="spacer"></div>
+    <button class="tbtn tbtn-text" id="printBtn"><i class="ph ph-printer"></i><span>Print</span></button>
+  </div>
+
   <div class="vshell">
-    <div class="canvas">
-      <iframe id="pdf" title="Sheet"></iframe>
+    <div class="canvas" id="viewport">
+      <div class="stage" id="stage">
+        <canvas id="cvB"></canvas>
+        <canvas id="cvA" class="hidden"></canvas>
+        <div class="divider hidden" id="divider"><div class="handle"><i class="ph ph-arrows-left-right"></i></div></div>
+      </div>
+
+      <!-- fixed labels (don't move with zoom/pan) -->
+      <div class="cmp-chip chip-a hidden" id="lblA"></div>
+      <div class="cmp-chip chip-b hidden" id="lblB"></div>
+      <div class="legend hidden" id="legend">
+        <span><i class="sw sw-a"></i><b id="legA"></b> only (removed)</span>
+        <span><i class="sw sw-b"></i><b id="legB"></b> only (added)</span>
+        <span><i class="sw sw-k"></i>Unchanged</span>
+      </div>
+
       <div class="empty hidden" id="empty"></div>
     </div>
     <aside class="history">
       <div class="h-label">Revisions</div>
       <div id="revs"></div>
     </aside>
+  </div>
+
+  <!-- print-only area (filled by sheet-page.js just before window.print()) -->
+  <div class="print-only" id="printArea">
+    <div class="print-head" id="printHead"></div>
+    <img id="printImg" alt="">
   </div>
 
   <script type="module" src="./js/sheet-page.js"></script>
