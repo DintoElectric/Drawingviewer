@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Compare Drawings — Drawings Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./app.css">
+<script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
+<!-- pdf.js (classic build exposes the global pdfjsLib) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+  <div class="viewer-header">
+    <a class="btn btn-icon btn-secondary" id="back" href="./index.html" title="Back"><i class="ph ph-arrow-left" style="font-size:16px"></i></a>
+    <span class="snum">COMPARE</span>
+    <span id="pageTitle" style="font:500 15px var(--font-heading)">Compare two drawings</span>
+    <div class="spacer"></div>
+    <button class="btn btn-secondary hidden" id="newBtn" style="min-height:36px"><i class="ph ph-arrow-counter-clockwise"></i>Start over</button>
+  </div>
+
+  <!-- STEP 1: choose the two drawings -->
+  <div class="cp-start" id="startScreen">
+    <div class="cp-start-inner">
+      <div class="cp-start-head">
+        <div class="cp-start-title">Compare two drawings</div>
+        <div class="cp-start-sub">Pick the older and the newer drawing. They stay on this device and are not uploaded or saved to any project.</div>
+      </div>
+      <div class="cp-drops">
+        <label class="cp-drop" id="dzA" for="fileA">
+          <i class="ph ph-file-arrow-up"></i>
+          <div class="cp-drop-label">Drawing A <span>older / before</span></div>
+          <div class="cp-drop-file" id="dzNameA">Tap to choose, or drop a file here</div>
+          <div class="cp-drop-hint">PDF, JPG or PNG</div>
+        </label>
+        <label class="cp-drop" id="dzB" for="fileB">
+          <i class="ph ph-file-arrow-up"></i>
+          <div class="cp-drop-label">Drawing B <span>newer / after</span></div>
+          <div class="cp-drop-file" id="dzNameB">Tap to choose, or drop a file here</div>
+          <div class="cp-drop-hint">PDF, JPG or PNG</div>
+        </label>
+      </div>
+      <div class="cp-start-msg hidden" id="startMsg"></div>
+    </div>
+  </div>
+
+  <!-- file pickers (shared by the start screen and the "Replace" buttons) -->
+  <input type="file" id="fileA" class="hidden" accept="application/pdf,image/*">
+  <input type="file" id="fileB" class="hidden" accept="application/pdf,image/*">
+
+  <!-- STEP 2: compare + notes (hidden until both files are loaded) -->
+  <div class="cp-app hidden" id="cpApp">
+
+    <!-- which two files are loaded -->
+    <div class="cp-filebar" id="fileBar">
+      <div class="cp-chip" id="chipA">
+        <span class="cp-chip-tag cp-tag-a">A</span>
+        <span class="cp-chip-name" id="nameA">—</span>
+        <span class="cp-chip-pages hidden" id="pagesA">
+          <button class="tbtn tbtn-sm" id="pagePrevA" aria-label="Previous page of A"><i class="ph ph-caret-left"></i></button>
+          <span class="page-ind" id="pageIndA">1 / 1</span>
+          <button class="tbtn tbtn-sm" id="pageNextA" aria-label="Next page of A"><i class="ph ph-caret-right"></i></button>
+        </span>
+        <button class="tbtn tbtn-sm tbtn-text" id="replaceA">Replace</button>
+      </div>
+      <button class="tbtn" id="swapBtn" title="Swap A and B" aria-label="Swap A and B"><i class="ph ph-arrows-left-right"></i></button>
+      <div class="cp-chip" id="chipB">
+        <span class="cp-chip-tag cp-tag-b">B</span>
+        <span class="cp-chip-name" id="nameB">—</span>
+        <span class="cp-chip-pages hidden" id="pagesB">
+          <button class="tbtn tbtn-sm" id="pagePrevB" aria-label="Previous page of B"><i class="ph ph-caret-left"></i></button>
+          <span class="page-ind" id="pageIndB">1 / 1</span>
+          <button class="tbtn tbtn-sm" id="pageNextB" aria-label="Next page of B"><i class="ph ph-caret-right"></i></button>
+        </span>
+        <button class="tbtn tbtn-sm tbtn-text" id="replaceB">Replace</button>
+      </div>
+    </div>
+
+    <!-- tools: zoom, compare mode, notes, print / export -->
+    <div class="vtools" id="vtools">
+      <div class="tgroup">
+        <button class="tbtn" id="zoomOut" aria-label="Zoom out"><i class="ph ph-magnifying-glass-minus"></i></button>
+        <button class="tbtn tbtn-text zoom-level" id="zoomLevel" title="Fit to screen">100%</button>
+        <button class="tbtn" id="zoomIn" aria-label="Zoom in"><i class="ph ph-magnifying-glass-plus"></i></button>
+        <button class="tbtn tbtn-text" id="fitBtn"><i class="ph ph-corners-out"></i><span>Fit</span></button>
+      </div>
+
+      <div class="vrule"></div>
+
+      <div class="tgroup">
+        <div class="seg" role="group" aria-label="Compare mode">
+          <button class="seg-btn on" id="modeSlider"><i class="ph ph-columns"></i><span>Slider</span></button>
+          <button class="seg-btn" id="modeOverlay"><i class="ph ph-stack"></i><span>Overlay</span></button>
+        </div>
+        <label class="opacity hidden" id="opacityWrap"><span>Drawing A</span><input type="range" id="opacity" min="0" max="100" value="100"></label>
+      </div>
+
+      <div class="vrule"></div>
+
+      <button class="tbtn tbtn-text" id="noteBtn" aria-pressed="false"><i class="ph ph-map-pin-plus"></i><span>Add note</span></button>
+      <button class="tbtn tbtn-text cp-notes-toggle" id="notesToggle"><i class="ph ph-list-bullets"></i><span id="notesToggleLabel">Notes (0)</span></button>
+
+      <div class="spacer"></div>
+
+      <div class="cp-menu-wrap">
+        <button class="tbtn tbtn-text" id="exportBtn" aria-haspopup="true" aria-expanded="false"><i class="ph ph-export"></i><span>Export</span><i class="ph ph-caret-down" style="font-size:12px"></i></button>
+        <div class="cp-menu hidden" id="exportMenu" role="menu">
+          <button class="cp-menu-item" id="exWord" role="menuitem"><i class="ph ph-file-doc"></i>Word document (.docx)</button>
+          <button class="cp-menu-item" id="exExcel" role="menuitem"><i class="ph ph-file-xls"></i>Excel spreadsheet (.xlsx)</button>
+        </div>
+      </div>
+      <button class="tbtn tbtn-text" id="printBtn"><i class="ph ph-printer"></i><span>Print</span></button>
+    </div>
+
+    <div class="vshell">
+      <div class="canvas" id="viewport">
+        <div class="stage" id="stage">
+          <canvas id="cvB"></canvas>
+          <canvas id="cvA" class="hidden"></canvas>
+          <div class="divider" id="divider"><div class="handle"><i class="ph ph-arrows-left-right"></i></div></div>
+          <div class="pins" id="pins"></div>
+        </div>
+
+        <!-- fixed labels (don't move with zoom/pan) -->
+        <div class="cmp-chip chip-a" id="lblA">A</div>
+        <div class="cmp-chip chip-b" id="lblB">B</div>
+        <div class="legend hidden" id="legend">
+          <span><i class="sw sw-a"></i><b>A</b> only (removed)</span>
+          <span><i class="sw sw-b"></i><b>B</b> only (added)</span>
+          <span><i class="sw sw-k"></i>Unchanged</span>
+        </div>
+        <div class="cp-banner hidden" id="noteBanner"><i class="ph ph-map-pin-plus"></i>Tap the drawing to drop a numbered note</div>
+
+        <div class="empty hidden" id="empty"></div>
+      </div>
+
+      <!-- notes panel -->
+      <aside class="notes-panel" id="notesPanel">
+        <div class="h-label">Notes</div>
+        <div class="np-meta">
+          <label class="field-lbl" for="docTitle">Title</label>
+          <input class="input" id="docTitle" type="text" placeholder="e.g. E-101 floor plan changes" autocomplete="off">
+          <label class="field-lbl" for="preparedBy">Prepared by</label>
+          <input class="input" id="preparedBy" type="text" placeholder="Name" autocomplete="off">
+        </div>
+        <div class="np-list" id="noteList"></div>
+        <div class="np-empty" id="noteEmpty">No notes yet. Turn on <b>Add note</b>, then tap the drawing where you spot a change.</div>
+        <button class="btn btn-secondary np-clear hidden" id="clearNotes" style="min-height:36px"><i class="ph ph-trash"></i>Clear all notes</button>
+      </aside>
+    </div>
+  </div>
+
+  <!-- note editor -->
+  <div class="backdrop hidden" id="noteDlg">
+    <div class="modal cp-dlg" role="dialog" aria-modal="true" aria-labelledby="noteDlgTitle">
+      <div class="m-head">
+        <div>
+          <div class="m-title" id="noteDlgTitle">Note</div>
+          <div class="m-sub" id="noteDlgSub"></div>
+        </div>
+      </div>
+      <div class="m-body cp-dlg-body">
+        <label class="field-lbl" for="noteCat">Type</label>
+        <select class="input" id="noteCat">
+          <option value="Changed">Changed</option>
+          <option value="Added">Added</option>
+          <option value="Removed">Removed</option>
+          <option value="Question">Question</option>
+          <option value="Other">Other</option>
+        </select>
+        <label class="field-lbl" for="noteText">Note</label>
+        <textarea class="input" id="noteText" rows="4" placeholder="What changed, and what does the field need to know?"></textarea>
+      </div>
+      <div class="m-actions">
+        <button class="btn btn-secondary hidden" id="noteDelete" style="min-height:40px"><i class="ph ph-trash"></i>Delete</button>
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="noteCancel" style="min-height:40px">Cancel</button>
+        <button class="btn btn-primary" id="noteSave" style="min-height:40px">Save note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- print-only area (filled by compare-page.js just before window.print()) -->
+  <div class="print-only" id="printArea">
+    <div class="print-head" id="printHead"></div>
+    <img id="printImg" alt="">
+    <div class="print-notes" id="printNotes"></div>
+  </div>
+
+  <script type="module" src="./js/compare-page.js"></script>
+</body>
+</html>
