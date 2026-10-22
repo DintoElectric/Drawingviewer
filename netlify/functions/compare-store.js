@@ -1,6 +1,8 @@
 // /compare-store — ANY SIGNED-IN USER (not admin-only).
 // Saves each person's Compare-page comparisons (both drawings + notes) under
 // their own login so they can log out, log back in, and pick up where they left off.
+// A comparison is either "single" (two drawings) or "sets" (two multi-page drawing sets
+// whose sheets are paired up); both are stored the same way: two files + a small state.
 //
 //   GET  ?action=list
 //   GET  ?action=get&id=
@@ -8,7 +10,7 @@
 //   POST {action:"begin",  title, files:{A:{name,size,mime}, B:{...}}}  -> {id, chunkBytes}
 //   POST {action:"chunk",  id, which, index, dataB64}
 //   POST {action:"commit", id, state}
-//   POST {action:"update", id, state}           (autosave: notes + view)
+//   POST {action:"update", id, state}           (autosave: notes + view + sheet pairs)
 //   POST {action:"rename", id, title}
 //   POST {action:"delete", id}
 //
@@ -23,12 +25,13 @@ const crypto = require("crypto");
 const { store, requireUser, readJSON, writeJSON, json, fail, httpError, safeIndex } = require("./lib/auth");
 
 /* ---- limits: change these numbers to change the rules ---------------- */
-const MAX_COMPARISONS = 12;                  // saved comparisons per person
+const MAX_COMPARISONS = 8;                   // saved comparisons per person
 const MAX_TOTAL_BYTES = 500 * 1024 * 1024;   // total saved drawings per person
-const MAX_FILE_BYTES = 50 * 1024 * 1024;     // largest single drawing
+const MAX_FILE_BYTES = 50 * 1024 * 1024;     // largest single file (a whole set is one file)
 const CHUNK_BYTES = 3 * 1024 * 1024;         // piece size (upload and download)
 const STALE_MS = 60 * 60 * 1000;             // half-finished uploads are cleared after 1 hour
 const MAX_NOTES = 500;
+const MAX_PAIRS = 1000;                      // sheet pairs in one whole-set comparison
 const MB = 1024 * 1024;
 const CATS = ["Changed", "Added", "Removed", "Question", "Other"];
 const ID_RE = /^[a-z0-9]{8,32}$/;
@@ -80,11 +83,34 @@ function cleanNote(n) {
     id: str(n.id, 40) || crypto.randomBytes(4).toString("hex"),
     x: clamp(x, 0, 1),
     y: clamp(y, 0, 1),
-    pa: int(n.pa, 1, 9999, 1),
-    pb: int(n.pb, 1, 9999, 1),
+    pa: int(n.pa, 0, 9999, 1),               // 0 = this sheet has no match in set A
+    pb: int(n.pb, 0, 9999, 1),               // 0 = this sheet has no match in set B
     cat: CATS.includes(n.cat) ? n.cat : "Other",
     text: str(n.text, 2000),
     t: num(n.t, 0, 4102444800000, Date.now()),
+  };
+}
+
+// Whole-set comparisons: which page of set A goes with which page of set B.
+function cleanSets(s) {
+  if (!s || typeof s !== "object" || !s.on) return { on: false };
+  const pairs = (Array.isArray(s.pairs) ? s.pairs : []).slice(0, MAX_PAIRS).map((p) => {
+    p = p && typeof p === "object" ? p : {};
+    return {
+      a: int(p.a, 0, 9999, 0),
+      b: int(p.b, 0, 9999, 0),
+      num: str(p.num, 40),
+      title: str(p.title, 120),
+      manual: !!p.manual,
+      chg: p.chg == null ? null : num(p.chg, -1, 1e9, null),   // changed-pixel count; -1 = couldn't check
+    };
+  }).filter((p) => p.a || p.b);
+  return {
+    on: true,
+    match: s.match === "order" ? "order" : "number",
+    tb: ["br", "right", "none"].includes(s.tb) ? s.tb : "br",
+    cur: int(s.cur, 0, Math.max(0, pairs.length - 1), 0),
+    pairs,
   };
 }
 
@@ -98,6 +124,7 @@ function cleanState(s) {
     notes: (Array.isArray(s.notes) ? s.notes : []).slice(0, MAX_NOTES).map(cleanNote).filter(Boolean),
     view: { mode: v.mode === "overlay" ? "overlay" : "slider", p: num(v.p, 0, 1, 0.5), opacity: num(v.opacity, 0, 1, 1) },
     pages: { A: int(p.A, 1, 9999, 1), B: int(p.B, 1, 9999, 1) },
+    sets: cleanSets(s.sets),
     savedAt: new Date().toISOString(),
   };
 }
@@ -124,6 +151,13 @@ async function loadIndex(st, u) {
 const saveIndex = (st, u, idx) => writeJSON(st, K.index(u), idx);
 const usedBytes = (idx) => idx.items.reduce((s, e) => s + (e.A?.size || 0) + (e.B?.size || 0), 0);
 const limits = () => ({ maxComparisons: MAX_COMPARISONS, maxTotalBytes: MAX_TOTAL_BYTES, maxFileBytes: MAX_FILE_BYTES, chunkBytes: CHUNK_BYTES });
+
+// What the saved list shows about a comparison.
+function applyKind(e, state) {
+  e.kind = state.sets && state.sets.on ? "sets" : "single";
+  e.pairs = state.sets && state.sets.on ? state.sets.pairs.length : 0;
+  e.notes = state.notes.length;
+}
 
 // Finds one entry in the person's index. Because reads can lag a moment behind
 // writes, a missing (or not-yet-updated) entry is re-checked a few times.
@@ -232,7 +266,7 @@ async function actBegin(st, u, b) {
   const id = crypto.randomBytes(8).toString("hex");
   idx.items.push({
     id, status: "uploading", started: now, created: now, updated: now,
-    title: str(b.title, 140).trim(), notes: 0, A, B,
+    title: str(b.title, 140).trim(), notes: 0, kind: "single", pairs: 0, A, B,
   });
   await saveIndex(st, u, idx);
   return json(200, { id, chunkBytes: CHUNK_BYTES, chunksA: A.chunks, chunksB: B.chunks });
@@ -264,7 +298,7 @@ async function actCommit(st, u, b) {
   e.status = "ready";
   e.updated = Date.now();
   e.title = state.title || e.title || `${e.A.name} vs ${e.B.name}`.slice(0, 140);
-  e.notes = state.notes.length;
+  applyKind(e, state);
   delete e.started;
   await saveIndex(st, u, idx);
   return json(200, { item: e });
@@ -276,7 +310,7 @@ async function actUpdate(st, u, b) {
   const state = cleanState(b.state);
   await writeJSON(st, K.state(u, id), state);
   e.updated = Date.now();
-  e.notes = state.notes.length;
+  applyKind(e, state);
   if (state.title) e.title = state.title;
   await saveIndex(st, u, idx);
   return json(200, { ok: true, updated: e.updated, notes: e.notes });
