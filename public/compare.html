@@ -29,27 +29,20 @@
   <div class="cp-start" id="startScreen">
     <div class="cp-start-inner">
       <div class="cp-start-head">
-        <div class="cp-start-title">Compare drawings</div>
-        <div class="cp-start-sub" id="startSub">Pick the older and the newer drawing. Nothing is saved to a project, and nothing is stored on the server unless you tap Save.</div>
-      </div>
-
-      <div class="cp-modes">
-        <div class="seg" role="group" aria-label="What are you comparing?">
-          <button class="seg-btn on" id="startModeSingle"><i class="ph ph-file"></i><span>One drawing each</span></button>
-          <button class="seg-btn" id="startModeSets"><i class="ph ph-files"></i><span>Whole sets</span></button>
-        </div>
+        <div class="cp-start-title">Compare drawings or drawing sets</div>
+        <div class="cp-start-sub" id="startSub">Pick the older and the newer drawing, or two drawing sets (one PDF each). If a file has several sheets, they are matched up for you as it loads. Nothing is stored on the server unless you tap Save.</div>
       </div>
 
       <div class="cp-drops">
         <label class="cp-drop" id="dzA" for="fileA">
           <i class="ph ph-file-arrow-up"></i>
-          <div class="cp-drop-label"><span id="dzLabelA">Drawing A</span> <span>older / before</span></div>
+          <div class="cp-drop-label"><span id="dzLabelA">Older</span> <span>drawing or set, before</span></div>
           <div class="cp-drop-file" id="dzNameA">Tap to choose, or drop a file here</div>
           <div class="cp-drop-hint" id="dzHintA">PDF, JPG or PNG</div>
         </label>
         <label class="cp-drop" id="dzB" for="fileB">
           <i class="ph ph-file-arrow-up"></i>
-          <div class="cp-drop-label"><span id="dzLabelB">Drawing B</span> <span>newer / after</span></div>
+          <div class="cp-drop-label"><span id="dzLabelB">Newer</span> <span>drawing or set, after</span></div>
           <div class="cp-drop-file" id="dzNameB">Tap to choose, or drop a file here</div>
           <div class="cp-drop-hint" id="dzHintB">PDF, JPG or PNG</div>
         </label>
