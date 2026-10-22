@@ -5,6 +5,11 @@
  *  Exports: exportWord(ctx), exportExcel(ctx)  — ctx is described at the
  *  top of compare-page.js. Both libraries are fetched from a CDN the
  *  first time they're needed, then cached for the session.
+ *
+ *  Two shapes of report:
+ *    - one drawing each (ctx.setMode false): overview + one notes table
+ *    - whole sets (ctx.setMode true): a summary of every sheet, then one
+ *      section per sheet that has notes (overview of the pair + its notes)
  * ------------------------------------------------------------------ */
 
 const LIBS = {
@@ -72,6 +77,7 @@ function download(blob, filename) {
  *  Word
  * ------------------------------------------------------------------ */
 const CAT_COLOR = { Changed: "B45309", Added: "047857", Removed: "B91C1C", Question: "5B3FD6", Other: "4B5563" };
+const STATUS_COLOR = { changed: "B45309", same: "4B5563", onlyA: "B91C1C", onlyB: "047857", pending: "4B5563", unknown: "4B5563" };
 
 function fit(w, h, maxW, maxH) {
   const s = Math.min(maxW / w, maxH / h, 1);
@@ -98,65 +104,142 @@ export async function exportWord(ctx) {
     children, borders, margins: cellMargins, verticalAlign: VerticalAlign.TOP,
     width: { size: width, type: WidthType.DXA }, ...opts,
   });
+  const shade = { type: ShadingType.CLEAR, fill: "EDEBFA", color: "auto" };
+  const multi = ctx.fileA.pages > 1 || ctx.fileB.pages > 1;
+
+  // Notes table: number, type, zone (+ sheet), note text, and before/after crops of the spot.
+  const NW = { n: 520, cat: 1100, zone: 1180, text: 5200, a: 3200, b: 3200 };   // = 14400 twips (10 in)
+  async function notesTable(list) {
+    const head = (t, w) => cell([para(runs(t, { bold: true, size: 18 }))], w, { shading: shade });
+    const rows = [new TableRow({
+      tableHeader: true, cantSplit: true,
+      children: [head("#", NW.n), head("Type", NW.cat), head("Zone", NW.zone), head("Note", NW.text),
+                 head("Drawing A (before)", NW.a), head("Drawing B (after)", NW.b)],
+    })];
+    for (const n of list) {
+      const crops = await ctx.getCrops(n);      // one at a time to keep memory low
+      const sa = fit(crops.a.w, crops.a.h, 200, 150), sb = fit(crops.b.w, crops.b.h, 200, 150);
+      const where = ctx.setMode ? n.sheet : (multi ? `A p.${n.pageA} · B p.${n.pageB}` : "");
+      rows.push(new TableRow({
+        cantSplit: true,
+        children: [
+          cell([para(runs(String(n.n), { bold: true }))], NW.n),
+          cell([para(runs(n.cat, { bold: true, color: CAT_COLOR[n.cat] || "333333" }))], NW.cat),
+          cell([para(runs(n.zone, { bold: true })), ...(where ? [para(runs(where, { size: 16, color: "666666" }))] : [])], NW.zone),
+          cell([para(runs(n.text || "—"))], NW.text),
+          cell([para([new ImageRun({ data: crops.a.data, type: "png", transformation: sa })])], NW.a),
+          cell([para([new ImageRun({ data: crops.b.data, type: "png", transformation: sb })])], NW.b),
+        ],
+      }));
+    }
+    return new Table({
+      width: { size: 14400, type: WidthType.DXA },
+      columnWidths: [NW.n, NW.cat, NW.zone, NW.text, NW.a, NW.b],
+      rows,
+    });
+  }
+
+  const modeCaption = ctx.mode === "overlay"
+    ? (ctx.overlayNote || "Overlay view: dark = unchanged.")
+    : "Slider view: A is left of the line, B is right of it.";
 
   // ----- header block -----
   const children = [
     new Paragraph({ children: [new TextRun({ text: ctx.title, bold: true, size: 36, font: "Arial" })], spacing: { after: 100 } }),
-    para(runs(`Drawing A (before): ${ctx.fileA.name}${ctx.fileA.pages > 1 ? ` — page ${ctx.fileA.page}` : ""}`, { size: 20 })),
-    para(runs(`Drawing B (after): ${ctx.fileB.name}${ctx.fileB.pages > 1 ? ` — page ${ctx.fileB.page}` : ""}`, { size: 20 })),
-    para(runs(`${ctx.preparedBy ? "Prepared by " + ctx.preparedBy + " · " : ""}${ctx.date}`, { size: 20, color: "555555" }), { spacing: { after: 160 } }),
   ];
-
-  // ----- overview image (compare view with numbered pins) -----
-  const ov = await ctx.getOverview(3e6);
-  const ovSize = fit(ov.w, ov.h, 940, 520);
-  children.push(new Paragraph({
-    alignment: AlignmentType.CENTER, spacing: { after: 60 },
-    children: [new ImageRun({ data: ov.data, type: "png", transformation: ovSize })],
-  }));
-  children.push(para(runs(
-    ctx.mode === "overlay"
-      ? (ctx.overlayNote || "Overlay view: dark = unchanged.")
-      : "Slider view: A is left of the line, B is right of it.",
-    { size: 16, color: "666666", italics: true }), { alignment: AlignmentType.CENTER }));
-
-  // ----- notes table -----
-  const W = { n: 520, cat: 1100, zone: 1180, text: 5200, a: 3200, b: 3200 };   // = 14400 twips (10 in)
-  const total = Object.values(W).reduce((a, b) => a + b, 0);
-  const head = (t, w) => cell([para(runs(t, { bold: true, size: 18 }))], w,
-    { shading: { type: ShadingType.CLEAR, fill: "EDEBFA", color: "auto" } });
-
-  const rows = [new TableRow({
-    tableHeader: true, cantSplit: true,
-    children: [head("#", W.n), head("Type", W.cat), head("Zone", W.zone), head("Note", W.text), head("Drawing A (before)", W.a), head("Drawing B (after)", W.b)],
-  })];
-
-  for (const n of ctx.notes) {
-    const crops = await ctx.getCrops(n);      // one at a time to keep memory low
-    const sa = fit(crops.a.w, crops.a.h, 200, 150), sb = fit(crops.b.w, crops.b.h, 200, 150);
-    const multi = ctx.fileA.pages > 1 || ctx.fileB.pages > 1;
-    rows.push(new TableRow({
-      cantSplit: true,
-      children: [
-        cell([para(runs(String(n.n), { bold: true }))], W.n),
-        cell([para(runs(n.cat, { bold: true, color: CAT_COLOR[n.cat] || "333333" }))], W.cat),
-        cell([para(runs(n.zone, { bold: true })), ...(multi ? [para(runs(`A p.${n.pageA} · B p.${n.pageB}`, { size: 16, color: "666666" }))] : [])], W.zone),
-        cell([para(runs(n.text || "—"))], W.text),
-        cell([para([new ImageRun({ data: crops.a.data, type: "png", transformation: sa })])], W.a),
-        cell([para([new ImageRun({ data: crops.b.data, type: "png", transformation: sb })])], W.b),
-      ],
-    }));
+  if (ctx.setMode) {
+    children.push(
+      para(runs(`Set A (before): ${ctx.fileA.name} — ${ctx.fileA.pages} sheets`, { size: 20 })),
+      para(runs(`Set B (after): ${ctx.fileB.name} — ${ctx.fileB.pages} sheets`, { size: 20 })),
+    );
+  } else {
+    children.push(
+      para(runs(`Drawing A (before): ${ctx.fileA.name}${ctx.fileA.pages > 1 ? ` — page ${ctx.fileA.page}` : ""}`, { size: 20 })),
+      para(runs(`Drawing B (after): ${ctx.fileB.name}${ctx.fileB.pages > 1 ? ` — page ${ctx.fileB.page}` : ""}`, { size: 20 })),
+    );
   }
+  children.push(para(runs(`${ctx.preparedBy ? "Prepared by " + ctx.preparedBy + " · " : ""}${ctx.date}`, { size: 20, color: "555555" }), { spacing: { after: 160 } }));
 
-  children.push(new Paragraph({
-    pageBreakBefore: true, spacing: { after: 120 },
-    children: [new TextRun({ text: `Notes (${ctx.notes.length})`, bold: true, size: 28, font: "Arial" })],
-  }));
-  children.push(new Table({
-    width: { size: total, type: WidthType.DXA },
-    columnWidths: [W.n, W.cat, W.zone, W.text, W.a, W.b],
-    rows,
-  }));
+  if (!ctx.setMode) {
+    // ----- one drawing each: overview image (compare view with numbered pins), then the notes -----
+    const ov = await ctx.getOverview(3e6);
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER, spacing: { after: 60 },
+      children: [new ImageRun({ data: ov.data, type: "png", transformation: fit(ov.w, ov.h, 940, 520) })],
+    }));
+    children.push(para(runs(
+      ctx.mode === "overlay" ? modeCaption : "Slider view: A is left of the line, B is right of it.",
+      { size: 16, color: "666666", italics: true }), { alignment: AlignmentType.CENTER }));
+    children.push(new Paragraph({
+      pageBreakBefore: true, spacing: { after: 120 },
+      children: [new TextRun({ text: `Notes (${ctx.notes.length})`, bold: true, size: 28, font: "Arial" })],
+    }));
+    children.push(await notesTable(ctx.notes));
+  } else {
+    // ----- whole sets: summary of every sheet, then one section per sheet that has notes -----
+    const SW = { num: 1700, title: 5900, status: 3400, a: 1100, b: 1100, notes: 1200 };   // = 14400
+    const sh = (t, w) => cell([para(runs(t, { bold: true, size: 18 }))], w, { shading: shade });
+    const sumRows = [new TableRow({
+      tableHeader: true, cantSplit: true,
+      children: [sh("Sheet", SW.num), sh("Title", SW.title), sh("Status", SW.status), sh("Set A", SW.a), sh("Set B", SW.b), sh("Notes", SW.notes)],
+    })];
+    for (const s of ctx.sheets) {
+      sumRows.push(new TableRow({
+        cantSplit: true,
+        children: [
+          cell([para(runs(s.num || "—", { bold: true }))], SW.num),
+          cell([para(runs(s.title || ""))], SW.title),
+          cell([para(runs(s.statusText, { color: STATUS_COLOR[s.status] || "333333", bold: s.status === "changed" }))], SW.status),
+          cell([para(runs(s.a ? `p.${s.a}` : "–"))], SW.a),
+          cell([para(runs(s.b ? `p.${s.b}` : "–"))], SW.b),
+          cell([para(runs(String(s.notes)))], SW.notes),
+        ],
+      }));
+    }
+    children.push(new Paragraph({
+      spacing: { after: 100 },
+      children: [new TextRun({ text: `Sheets (${ctx.sheets.length})`, bold: true, size: 28, font: "Arial" })],
+    }));
+    children.push(new Table({
+      width: { size: 14400, type: WidthType.DXA },
+      columnWidths: [SW.num, SW.title, SW.status, SW.a, SW.b, SW.notes],
+      rows: sumRows,
+    }));
+    children.push(para(runs(
+      "Change flags compare a reduced picture of each sheet and are a guide, not proof. " + modeCaption,
+      { size: 16, color: "666666", italics: true }), { spacing: { before: 100 } }));
+
+    // per-sheet sections
+    for (const s of ctx.sheets) {
+      if (!s.notes) continue;
+      const list = ctx.notes.filter((n) => n.sheetIdx === s.idx);
+      if (!list.length) continue;
+      children.push(new Paragraph({
+        pageBreakBefore: true, spacing: { after: 80 },
+        children: [
+          new TextRun({ text: s.num || "Sheet", bold: true, size: 28, font: "Arial" }),
+          new TextRun({ text: s.title ? ` — ${s.title}` : "", size: 24, font: "Arial" }),
+          new TextRun({ text: `    ${s.statusText}`, size: 20, color: STATUS_COLOR[s.status] || "666666", font: "Arial" }),
+        ],
+      }));
+      const ov = await ctx.getOverview(2.5e6, s.a, s.b);
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER, spacing: { after: 100 },
+        children: [new ImageRun({ data: ov.data, type: "png", transformation: fit(ov.w, ov.h, 940, 340) })],
+      }));
+      children.push(await notesTable(list));
+    }
+
+    // notes whose sheet pairing was changed afterwards
+    const orphans = ctx.notes.filter((n) => n.sheetIdx === 9999);
+    if (orphans.length) {
+      children.push(new Paragraph({
+        pageBreakBefore: true, spacing: { after: 80 },
+        children: [new TextRun({ text: "Other notes", bold: true, size: 28, font: "Arial" })],
+      }));
+      children.push(await notesTable(orphans));
+    }
+  }
   children.push(para(runs(ctx.zoneNote, { size: 16, color: "666666", italics: true }), { spacing: { before: 120 } }));
 
   const doc = new Document({
@@ -200,31 +283,34 @@ export async function exportExcel(ctx) {
 
   const thin = { style: "thin", color: { argb: "FFBFBFBF" } };
   const box = { top: thin, left: thin, bottom: thin, right: thin };
+  const headerStyle = (row) => {
+    row.height = 24;
+    row.eachCell((c) => {
+      c.font = { bold: true, color: { argb: "FFFFFFFF" }, name: "Arial", size: 11 };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF5B3FD6" } };
+      c.alignment = { vertical: "middle", horizontal: "left" };
+      c.border = box;
+    });
+  };
 
-  /* ---- Sheet 1: Notes (one row per note; filterable) ---- */
+  /* ---- Sheet 1: Notes (one row per note; filterable; whole sets get a Sheet column) ---- */
   const ws = wb.addWorksheet("Notes", { views: [{ state: "frozen", ySplit: 1 }] });
-  ws.columns = [
-    { header: "#", key: "n", width: 6 },
+  const cols = [{ header: "#", key: "n", width: 6 }];
+  if (ctx.setMode) cols.push({ header: "Sheet", key: "sheet", width: 14 });
+  cols.push(
     { header: "Type", key: "cat", width: 12 },
     { header: "Zone", key: "zone", width: 8 },
     { header: "Note", key: "text", width: 70 },
-    { header: "Drawing A page", key: "pa", width: 15 },
-    { header: "Drawing B page", key: "pb", width: 15 },
+    { header: ctx.setMode ? "Set A page" : "Drawing A page", key: "pa", width: 15 },
+    { header: ctx.setMode ? "Set B page" : "Drawing B page", key: "pb", width: 15 },
     { header: "Added", key: "t", width: 20 },
-  ];
-
-  const head = ws.getRow(1);
-  head.height = 24;
-  head.eachCell((c) => {
-    c.font = { bold: true, color: { argb: "FFFFFFFF" }, name: "Arial", size: 11 };
-    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF5B3FD6" } };
-    c.alignment = { vertical: "middle", horizontal: "left" };
-    c.border = box;
-  });
+  );
+  ws.columns = cols;
+  headerStyle(ws.getRow(1));
 
   for (const n of ctx.notes) {
-    const r = ws.addRow({ n: n.n, cat: n.cat, zone: n.zone, text: n.text || "",
-                          pa: n.pageA, pb: n.pageB, t: new Date(n.created) });
+    const r = ws.addRow({ n: n.n, sheet: n.sheet, cat: n.cat, zone: n.zone, text: n.text || "",
+                          pa: n.pageA || "–", pb: n.pageB || "–", t: new Date(n.created) });
     r.eachCell((c) => {
       c.font = { name: "Arial", size: 11 };
       c.alignment = { vertical: "top", wrapText: true };
@@ -233,13 +319,50 @@ export async function exportExcel(ctx) {
     r.getCell("t").numFmt = "yyyy-mm-dd hh:mm";
     r.getCell("n").alignment = { vertical: "top", horizontal: "center" };
   }
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 7 } };
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: "1:1" };
 
-  /* ---- Sheet 2: Details (what was compared) ---- */
+  /* ---- Sheet 2 (whole sets only): every sheet and its status ---- */
+  if (ctx.setMode && ctx.sheets) {
+    const ss = wb.addWorksheet("Sheets", { views: [{ state: "frozen", ySplit: 1 }] });
+    ss.columns = [
+      { header: "Sheet", key: "num", width: 16 },
+      { header: "Title", key: "title", width: 50 },
+      { header: "Status", key: "status", width: 24 },
+      { header: "Set A page", key: "a", width: 12 },
+      { header: "Set B page", key: "b", width: 12 },
+      { header: "Notes", key: "notes", width: 9 },
+    ];
+    headerStyle(ss.getRow(1));
+    for (const s of ctx.sheets) {
+      const r = ss.addRow({ num: s.num, title: s.title, status: s.statusText, a: s.a || "–", b: s.b || "–", notes: s.notes });
+      r.eachCell((c) => {
+        c.font = { name: "Arial", size: 11 };
+        c.alignment = { vertical: "top", wrapText: true };
+        c.border = box;
+      });
+      if (s.status === "changed") r.getCell("status").font = { name: "Arial", size: 11, bold: true, color: { argb: "FFB45309" } };
+      if (s.status === "onlyA") r.getCell("status").font = { name: "Arial", size: 11, color: { argb: "FFB91C1C" } };
+      if (s.status === "onlyB") r.getCell("status").font = { name: "Arial", size: 11, color: { argb: "FF047857" } };
+    }
+    ss.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 6 } };
+    ss.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: "1:1" };
+  }
+
+  /* ---- Details (what was compared) ---- */
   const ds = wb.addWorksheet("Details");
   ds.columns = [{ width: 22 }, { width: 80 }];
-  const rows = [
+  const rows = ctx.setMode ? [
+    ["Title", ctx.title],
+    ["Prepared by", ctx.preparedBy || ""],
+    ["Date", ctx.date],
+    ["Set A (before)", `${ctx.fileA.name} — ${ctx.fileA.pages} sheets`],
+    ["Set B (after)", `${ctx.fileB.name} — ${ctx.fileB.pages} sheets`],
+    ["Sheets compared", ctx.sheets ? ctx.sheets.length : 0],
+    ["Number of notes", ctx.notes.length],
+    ["Change flags", "Compare a reduced picture of each sheet. A guide, not proof."],
+    ["Zone key", ctx.zoneNote],
+  ] : [
     ["Title", ctx.title],
     ["Prepared by", ctx.preparedBy || ""],
     ["Date", ctx.date],

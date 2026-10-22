@@ -15,6 +15,7 @@ const MAGIC = "DHCMP001";                 // first 8 bytes of every export file
 const MAX_HEADER = 2 * MB;                // sanity limit for the notes/header block
 const MAX_IMPORT_FILE = 200 * MB;         // sanity limit for a drawing inside an export
 const MAX_NOTES = 500;
+const MAX_PAIRS = 1000;
 const CATS = ["Changed", "Added", "Removed", "Question", "Other"];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -65,7 +66,7 @@ function mimeFor(meta) {
  *  Saved comparisons on the server
  * ------------------------------------------------------------------ */
 
-// -> { items:[{id,title,notes,created,updated,A:{name,size,...},B:{...}}], slotsUsed, usedBytes, limits }
+// -> { items:[{id,title,notes,kind,pairs,created,updated,A:{name,size,...},B:{...}}], slotsUsed, usedBytes, limits }
 export function listComparisons() {
   return api(`${FN}?${qs({ action: "list" })}`);
 }
@@ -99,7 +100,7 @@ export async function downloadFiles(item, { onProgress, signal } = {}) {
 
 // Saves a NEW comparison. If anything fails or is cancelled, the half-saved copy is removed
 // so it doesn't use up one of the person's slots.
-// state = { title, preparedBy, notes, view:{mode,p,opacity}, pages:{A,B} }
+// state = { title, preparedBy, notes, view:{mode,p,opacity}, pages:{A,B}, sets }
 export async function saveComparison({ A, B, state, onProgress, signal }) {
   const total = A.size + B.size;
   const begin = await api(FN, {
@@ -136,7 +137,7 @@ export async function saveComparison({ A, B, state, onProgress, signal }) {
   }
 }
 
-// Saves changed notes / view settings for an already-saved comparison.
+// Saves changed notes / view settings / sheet pairings for an already-saved comparison.
 export function updateState(id, state) {
   return api(FN, { method: "POST", body: { action: "update", id, state } });
 }
@@ -188,7 +189,7 @@ export function createAutosaver({ id, getState, onStatus, delay = 1500 }) {
  *
  *  Layout:  8 bytes  "DHCMP001"
  *           4 bytes  header length N (little-endian)
- *           N bytes  header JSON (title, notes, view, file names + sizes)
+ *           N bytes  header JSON (title, notes, view, sheet pairs, file names + sizes)
  *           drawing A bytes, then drawing B bytes
  *  Built from Blob pieces, so big scans are never copied into memory.
  * ------------------------------------------------------------------ */
@@ -203,8 +204,8 @@ function cleanNotes(list) {
     return {
       id: String(n.id || Math.random().toString(36).slice(2, 10)).slice(0, 40),
       x: clamp(x, 0, 1), y: clamp(y, 0, 1),
-      pa: Number.isInteger(pa) && pa > 0 ? pa : 1,
-      pb: Number.isInteger(pb) && pb > 0 ? pb : 1,
+      pa: Number.isInteger(pa) && pa >= 0 ? pa : 1,       // 0 = no matching sheet in set A
+      pb: Number.isInteger(pb) && pb >= 0 ? pb : 1,       // 0 = no matching sheet in set B
       cat: CATS.includes(n.cat) ? n.cat : "Other",
       text: String(n.text == null ? "" : n.text).slice(0, 2000),
       t: Number.isFinite(Number(n.t)) ? Number(n.t) : Date.now(),
@@ -222,19 +223,46 @@ function cleanView(v) {
   };
 }
 
+// Whole-set comparisons: which page of set A goes with which page of set B.
+export function cleanSets(s) {
+  if (!s || typeof s !== "object" || !s.on) return { on: false };
+  const pairs = (Array.isArray(s.pairs) ? s.pairs : []).slice(0, MAX_PAIRS).map((p) => {
+    p = p && typeof p === "object" ? p : {};
+    const a = parseInt(p.a, 10), b = parseInt(p.b, 10);
+    const chg = p.chg == null ? null : Number(p.chg);
+    return {
+      a: Number.isInteger(a) && a > 0 ? Math.min(a, 9999) : 0,
+      b: Number.isInteger(b) && b > 0 ? Math.min(b, 9999) : 0,
+      num: String(p.num == null ? "" : p.num).slice(0, 40),
+      title: String(p.title == null ? "" : p.title).slice(0, 120),
+      manual: !!p.manual,
+      chg: Number.isFinite(chg) ? clamp(chg, -1, 1e9) : null,
+    };
+  }).filter((p) => p.a || p.b);
+  const cur = parseInt(s.cur, 10);
+  return {
+    on: true,
+    match: s.match === "order" ? "order" : "number",
+    tb: ["br", "right", "none"].includes(s.tb) ? s.tb : "br",
+    cur: Number.isInteger(cur) ? clamp(cur, 0, Math.max(0, pairs.length - 1)) : 0,
+    pairs,
+  };
+}
+
 export function exportFileName(state, A, B) {
   const raw = (state.title || "").trim() || `${baseName(A.name)} vs ${baseName(B.name)}`;
   const slug = raw.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "Drawing_Comparison";
   return slug + FILE_EXT;
 }
 
-// -> Blob. state = { title, preparedBy, notes, view, pages }
+// -> Blob. state = { title, preparedBy, notes, view, pages, sets }
 export function buildExport({ A, B, state }) {
   const header = {
     format: "dhcompare", version: 1, created: Date.now(),
     title: state.title || "", preparedBy: state.preparedBy || "",
     notes: cleanNotes(state.notes), view: cleanView(state.view),
     pages: { A: (state.pages && state.pages.A) || 1, B: (state.pages && state.pages.B) || 1 },
+    sets: cleanSets(state.sets),
     files: {
       A: { name: A.name, size: A.size, type: A.type },
       B: { name: B.name, size: B.size, type: B.type },
@@ -283,6 +311,7 @@ export async function parseExport(file) {
       notes: cleanNotes(h.notes),
       view: cleanView(h.view),
       pages: { A: Number.isInteger(pa) && pa > 0 ? pa : 1, B: Number.isInteger(pb) && pb > 0 ? pb : 1 },
+      sets: cleanSets(h.sets),
     },
   };
 }

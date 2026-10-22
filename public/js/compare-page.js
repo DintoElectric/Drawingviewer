@@ -3,18 +3,24 @@ import * as cloud from "./compare-cloud.js";
 import * as colors from "./cmp-colors.js";
 
 /* ------------------------------------------------------------------ *
- *  Compare page: two drawings (PDF or image), slider/overlay compare,
- *  pinch/pan zoom, numbered notes, print, export, and saved
- *  comparisons (per login) with a single-file export (.dhcompare).
+ *  Compare page: two drawings (PDF or image) or two whole drawing sets,
+ *  slider/overlay compare, pinch/pan zoom, numbered notes, print, export,
+ *  and saved comparisons (per login) with a single-file export (.dhcompare).
+ *
+ *  Whole sets: each set is one multi-page PDF. Sheets are matched by sheet
+ *  number (read from each page's title block) or by page order, every matched
+ *  pair gets a "changed / no visible change" flag, and notes belong to a pair
+ *  (they already store a page number for A and for B; 0 = no matching sheet).
  *
  *  Word/Excel export contract (implemented in compare-export.js):
  *    exportWord(ctx)  /  exportExcel(ctx)
  *    ctx = {
- *      title, preparedBy, date, dateISO, slug, zoneNote, mode, overlayNote,
+ *      title, preparedBy, date, dateISO, slug, zoneNote, mode, overlayNote, setMode,
  *      fileA: {name, page, pages}, fileB: {name, page, pages},
- *      notes: [{n, id, cat, text, zone, x, y, pageA, pageB, created}],
- *      getOverview(maxPx) -> Promise<{data:Uint8Array, w, h}>   // PNG
- *      getCrops(note)     -> Promise<{a:{data,w,h}, b:{data,w,h}}>
+ *      sheets: [{idx, num, title, status, statusText, a, b, notes}]    // set mode only
+ *      notes: [{n, id, cat, text, zone, x, y, pageA, pageB, created, sheet, sheetIdx}],
+ *      getOverview(maxPx, pa?, pb?) -> Promise<{data:Uint8Array, w, h}>   // PNG
+ *      getCrops(note)               -> Promise<{a:{data,w,h}, b:{data,w,h}}>
  *    }
  * ------------------------------------------------------------------ */
 
@@ -31,6 +37,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const dpr = () => Math.min(window.devicePixelRatio || 1, 3);
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const yieldUI = () => new Promise((r) => setTimeout(r, 0));
 const baseName = (n) => String(n || "").replace(/\.[^.]+$/, "");
 const fmtWhen = (ms) => {
   const d = new Date(ms);
@@ -54,13 +61,20 @@ const MIN_Z = 0.4, MAX_Z = 12;
 const BASE_MAX_PX = 8e6;
 const DETAIL_MAX_PX = 9e6;
 const PRINT_MAXPX = 8e6;
+const SET_PRINT_MAXPX = 4e6;             // per-sheet overview when printing a whole set
 const CROP_W = 300, CROP_RATIO = 0.75, CROP_K = 2.4;   // crop region in stage units (stage width = 1000)
 const ZCOLS = 8, ZROWS = 6;
+
+// whole-set change checking
+const WORK_PX = 1800;                    // long side of the reduced picture used to look for changes
+const CHG_MIN_PX = 70;                   // fewer different pixels than this = "no visible change"
+const SHEET_RE = /^[A-Z]{1,3}[-. ]?\d{1,3}(?:\.\d{1,3})?[A-Z]?$/;   // E-101, E101, ES-001, E-101.1, E-101A
+const TB_REGION = { br: [0.72, 0.72], right: [0.82, 0], none: [2, 2] };   // [left edge, top edge] left out of the check
 
 /* ---------- state ---------- */
 const S = { z: 1, tx: 0, ty: 0, vw: 800, vh: 600, W0: 800, H0: 600 };
 const view = { mode: "slider", p: 0.5, opacity: 1, noting: false };
-const slots = { A: null, B: null };      // {doc, page}   doc = {name, fp, file, numPages, getPage, destroy}
+const slots = { A: null, B: null };      // {doc, page}   doc = {name, fp, file, numPages, getPage, destroy}; page 0 = blank (no matching sheet)
 let cpOn = false;
 let notes = [];                          // {id,x,y,pa,pb,cat,text,t}
 let selId = null;
@@ -70,6 +84,11 @@ let cloudId = null;                      // id of the saved copy on the server (
 let autosaver = null;
 let lastSave = "saved";                  // "saving" | "saved" | "error"
 let savedData = null;                    // last list shown on the start screen
+
+// whole sets
+const setS = { on: false, match: "number", tb: "br", pairs: [], cur: 0, idx: { A: [], B: [] },
+               filter: "all", run: 0, done: 0, total: 0, notice: "" };
+let startMode = "single";                // what the start screen is set up for: "single" | "sets"
 
 // Saved lists can lag a moment behind changes on the server, so remember what was
 // saved / deleted / renamed during this visit and apply it to every list we show.
@@ -110,6 +129,16 @@ function imagePage(img) {
   };
 }
 
+// A blank white sheet, used on the side of a pair that has no matching sheet.
+function blankPage(w, h) {
+  return {
+    getViewport({ scale = 1, offsetX = 0, offsetY = 0 } = {}) {
+      return { width: w * scale, height: h * scale, scale, offsetX, offsetY };
+    },
+    render() { return { promise: Promise.resolve(), cancel() {} }; },
+  };
+}
+
 async function openFile(file) {
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
   const fp = `${file.name}|${file.size}|${file.lastModified}`;
@@ -135,6 +164,16 @@ async function openFile(file) {
   catch (e) { URL.revokeObjectURL(url); throw new Error("Couldn't read that image. Try a PDF, JPG or PNG."); }
   const page = imagePage(img);
   return { name: file.name, fp, file, numPages: 1, getPage: async () => page, destroy() { URL.revokeObjectURL(url); } };
+}
+
+// The two pages of a pair. A missing side (page 0) becomes a blank sheet the size of the other one.
+async function pagePair(pa, pb) {
+  let pageA = pa ? await slots.A.doc.getPage(pa) : null;
+  let pageB = pb ? await slots.B.doc.getPage(pb) : null;
+  if (!pageA && !pageB) throw new Error("This sheet has no pages to show.");
+  if (!pageA) { const v = pageB.getViewport({ scale: 1 }); pageA = blankPage(v.width, v.height); }
+  if (!pageB) { const v = pageA.getViewport({ scale: 1 }); pageB = blankPage(v.width, v.height); }
+  return { pageA, pageB };
 }
 
 /* ------------------------------------------------------------------ *
@@ -217,7 +256,14 @@ function renderFit(page, canvas) {
   return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp });
 }
 
-async function setLayer(L, doc, pageNum) {
+// pageNum 0 = no matching sheet: show a blank sheet the size of the layer it is paired with.
+async function setLayer(L, doc, pageNum, like) {
+  if (!pageNum) {
+    const w = like && like.pw ? like.pw : 612, h = like && like.ph ? like.ph : 792;
+    L.page = blankPage(w, h);
+    L.pw = w; L.ph = h;
+    return;
+  }
   L.page = await doc.getPage(clamp(pageNum, 1, doc.numPages));
   const vp = L.page.getViewport({ scale: 1 });
   L.pw = vp.width; L.ph = vp.height;
@@ -304,8 +350,13 @@ let mountSeq = 0;
 async function mountBoth(keep) {
   const my = ++mountSeq;
   try {
-    await setLayer(LB, slots.B.doc, slots.B.page);
-    await setLayer(LA, slots.A.doc, slots.A.page);
+    if (slots.B.page) {
+      await setLayer(LB, slots.B.doc, slots.B.page);
+      await setLayer(LA, slots.A.doc, slots.A.page, LB);
+    } else {
+      await setLayer(LA, slots.A.doc, slots.A.page);
+      await setLayer(LB, slots.B.doc, 0, LA);
+    }
   } catch (e) {
     stage.classList.add("hidden");
     emptyEl.classList.remove("hidden");
@@ -336,13 +387,21 @@ function syncChrome() {
     if (!s) continue;
     $("name" + w).textContent = s.doc.name;
     $("name" + w).title = s.doc.name;
-    $("pages" + w).classList.toggle("hidden", s.doc.numPages < 2);
-    $("pageInd" + w).textContent = `${s.page} / ${s.doc.numPages}`;
+    $("pages" + w).classList.toggle("hidden", setS.on || s.doc.numPages < 2);
+    $("pageInd" + w).textContent = `${s.page || "–"} / ${s.doc.numPages}`;
     $("pagePrev" + w).disabled = s.page <= 1;
     $("pageNext" + w).disabled = s.page >= s.doc.numPages;
   }
-  if (slots.A) $("lblA").textContent = `A · ${slots.A.doc.name}`;
-  if (slots.B) $("lblB").textContent = `B · ${slots.B.doc.name}`;
+  const lbl = (w) => {
+    const s = slots[w];
+    if (!s) return "";
+    if (!s.page) return `${w} · no matching sheet`;
+    return setS.on ? `${w} · ${s.doc.name} · p.${s.page}` : `${w} · ${s.doc.name}`;
+  };
+  $("lblA").textContent = lbl("A");
+  $("lblB").textContent = lbl("B");
+  $("pageTitle").textContent = setS.on ? "Compare two sets" : "Compare two drawings";
+  renderPairNav();
 }
 
 function applyMode() {
@@ -377,7 +436,7 @@ $("opacity").addEventListener("input", (e) => {
 $("opacity").addEventListener("change", () => changed());
 
 /* ------------------------------------------------------------------ *
- *  Busy dialog (progress for saving / opening / exporting)
+ *  Busy dialog (progress for saving / opening / reading sheets / exporting)
  * ------------------------------------------------------------------ */
 let busyCtl = null;
 const busyActive = () => !$("busy").classList.contains("hidden");
@@ -391,7 +450,8 @@ function busyShow(title, text, ctl) {
 }
 function busyProgress(p) {
   const verb = p.phase === "upload" ? "Saving" : "Downloading";
-  $("busyText").textContent = `${verb} Drawing ${p.which}… ${cloud.fmtBytes(p.done)} of ${cloud.fmtBytes(p.total)}`;
+  const what = p.which === "A" ? setS.on || startMode === "sets" ? "Set A" : "Drawing A" : setS.on || startMode === "sets" ? "Set B" : "Drawing B";
+  $("busyText").textContent = `${verb} ${what}… ${cloud.fmtBytes(p.done)} of ${cloud.fmtBytes(p.total)}`;
   $("busyBar").style.width = Math.min(100, p.total ? (p.done / p.total) * 100 : 0) + "%";
 }
 function busyHide() { $("busy").classList.add("hidden"); busyCtl = null; }
@@ -401,6 +461,422 @@ $("busyCancel").addEventListener("click", () => {
 window.addEventListener("beforeunload", (e) => {
   if (busyActive()) { e.preventDefault(); e.returnValue = ""; }
 });
+
+/* ------------------------------------------------------------------ *
+ *  Whole sets: reading sheet numbers, matching sheets, checking for changes
+ * ------------------------------------------------------------------ */
+const keyOf = (s) => String(s || "").toUpperCase().replace(/[\s\-_]/g, "");
+const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+
+const STATUS_TEXT = {
+  changed: "Changed", same: "No visible change", onlyA: "Removed (only in A)",
+  onlyB: "New (only in B)", pending: "Checking…", unknown: "Couldn't check",
+};
+const STATUS_SHORT = { changed: "Changed", same: "No change", onlyA: "Removed", onlyB: "New", pending: "Checking…", unknown: "Couldn't check" };
+
+function statusOf(p) {
+  if (!p.a) return "onlyB";
+  if (!p.b) return "onlyA";
+  if (p.chg == null) return "pending";
+  if (p.chg < 0) return "unknown";
+  return p.chg >= CHG_MIN_PX ? "changed" : "same";
+}
+const curPair = () => setS.pairs[setS.cur] || null;
+const notesOnPair = (p) => notes.filter((n) => n.pa === p.a && n.pb === p.b).length;
+const pairIndexOf = (n) => setS.pairs.findIndex((p) => p.a === n.pa && p.b === n.pb);
+function sheetOf(n) {
+  const i = pairIndexOf(n);
+  if (i >= 0) return setS.pairs[i].num || `Sheet ${i + 1}`;
+  return `A p.${n.pa || "–"} / B p.${n.pb || "–"}`;
+}
+
+// Picks the sheet number (and a guess at the title) out of one page's text.
+function pickSheet(page, items) {
+  const inRegion = (i) => (i.x > 0.5 && i.y > 0.5) || i.x > 0.85;     // bottom-right corner, or a right-hand strip
+  const pool = items.filter((i) => SHEET_RE.test(i.s.toUpperCase()) && inRegion(i)).sort((a, b) => b.size - a.size);
+  const best = pool[0];
+  if (!best) return { page, number: "", title: "" };
+  const LABEL = /^(sheet|title|date|scale|drawn|checked|project|revision|rev|no\.?|number|job|drawing|dwg)\b/i;
+  const near = items.filter((i) => i !== best && Math.abs(i.x - best.x) < 0.25 && i.y < best.y + 0.02 && i.y > best.y - 0.15 &&
+    i.size >= best.size * 0.5 && i.s.length >= 4 && !LABEL.test(i.s) && !SHEET_RE.test(i.s.toUpperCase()));
+  near.sort((a, b) => a.y - b.y || a.x - b.x);
+  return {
+    page,
+    number: best.s.toUpperCase().replace(/\s+/g, "-"),
+    title: near.map((i) => i.s).join(" ").replace(/\s+/g, " ").trim().slice(0, 80),
+  };
+}
+
+// Reads every page of a set: its sheet number and title. A page with no readable text (a scan) gets a blank number.
+async function readIndexOf(doc, tick, signal) {
+  const out = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    if (signal && signal.aborted) throw new Error("Cancelled.");
+    let entry = { page: p, number: "", title: "" };
+    try {
+      const page = await doc.getPage(p);
+      const vp = page.getViewport({ scale: 1 });
+      const tc = await page.getTextContent();
+      const items = [];
+      for (const it of tc.items) {
+        const s = String(it.str || "").trim();
+        if (!s) continue;
+        const m = pdfjsLib.Util.transform(vp.transform, it.transform);
+        items.push({ s, x: m[4] / vp.width, y: m[5] / vp.height, size: Math.hypot(m[2], m[3]) });
+      }
+      entry = pickSheet(p, items);
+    } catch (e) { /* leave blank; the person can pair this sheet by hand */ }
+    out.push(entry);
+    if (tick) tick();
+    await yieldUI();
+  }
+  return out;
+}
+
+function buildPairs(idxA, idxB, mode) {
+  const pairs = [];
+  if (mode === "order") {
+    const n = Math.max(idxA.length, idxB.length);
+    for (let i = 0; i < n; i++) {
+      const a = idxA[i], b = idxB[i];
+      pairs.push({ a: a ? a.page : 0, b: b ? b.page : 0,
+        num: (b && b.number) || (a && a.number) || `Page ${i + 1}`,
+        title: (b && b.title) || (a && a.title) || "", manual: false, chg: null });
+    }
+    return pairs;
+  }
+  const mapA = new Map();
+  idxA.forEach((e) => {
+    const k = keyOf(e.number);
+    if (!k) return;
+    if (!mapA.has(k)) mapA.set(k, []);
+    mapA.get(k).push(e);
+  });
+  const usedA = new Set();
+  idxB.forEach((b) => {
+    const k = keyOf(b.number);
+    const q = k ? mapA.get(k) : null;
+    const a = q && q.length ? q.shift() : null;
+    if (a) usedA.add(a.page);
+    pairs.push({ a: a ? a.page : 0, b: b.page, num: b.number || `B p.${b.page}`,
+      title: b.title || (a && a.title) || "", manual: false, chg: null });
+  });
+  idxA.forEach((a) => {
+    if (!usedA.has(a.page)) pairs.push({ a: a.page, b: 0, num: a.number || `A p.${a.page}`, title: a.title || "", manual: false, chg: null });
+  });
+  pairs.sort((x, y) => natural(x.num, y.num) || (x.b - y.b) || (x.a - y.a));
+  return pairs;
+}
+
+function numberFor(p) {
+  const nb = p.b && setS.idx.B[p.b - 1] && setS.idx.B[p.b - 1].number;
+  const na = p.a && setS.idx.A[p.a - 1] && setS.idx.A[p.a - 1].number;
+  return nb || na || (p.b ? `B p.${p.b}` : `A p.${p.a}`);
+}
+function titleFor(p) {
+  const tb = p.b && setS.idx.B[p.b - 1] && setS.idx.B[p.b - 1].title;
+  const ta = p.a && setS.idx.A[p.a - 1] && setS.idx.A[p.a - 1].title;
+  return tb || ta || "";
+}
+
+// Reads both sets and builds (or restores) the sheet pairs. `saved` = a saved/exported sets state, or null.
+async function prepareSets(saved, ctl) {
+  setS.match = saved && saved.match === "order" ? "order" : "number";
+  setS.tb = saved && ["br", "right", "none"].includes(saved.tb) ? saved.tb : "br";
+  const total = slots.A.doc.numPages + slots.B.doc.numPages;
+  let done = 0;
+  const signal = ctl && ctl.signal;
+  const tick = () => {
+    done++;
+    $("busyText").textContent = `Reading sheet numbers… ${done} of ${total}`;
+    $("busyBar").style.width = (done / total) * 100 + "%";
+  };
+  setS.idx.A = await readIndexOf(slots.A.doc, tick, signal);
+  setS.idx.B = await readIndexOf(slots.B.doc, tick, signal);
+  setS.notice = "";
+
+  const nA = slots.A.doc.numPages, nB = slots.B.doc.numPages;
+  const usable = saved && Array.isArray(saved.pairs) && saved.pairs.length &&
+    saved.pairs.every((p) => p && p.a <= nA && p.b <= nB && (p.a || p.b));
+  if (usable) {
+    setS.pairs = saved.pairs.map((p) => ({ a: p.a | 0, b: p.b | 0, num: p.num || "", title: p.title || "",
+      manual: !!p.manual, chg: typeof p.chg === "number" ? p.chg : null }));
+    setS.cur = clamp(parseInt(saved.cur, 10) || 0, 0, setS.pairs.length - 1);
+  } else {
+    const readA = setS.idx.A.filter((e) => e.number).length, readB = setS.idx.B.filter((e) => e.number).length;
+    if (readA < 0.6 * nA || readB < 0.6 * nB) {
+      setS.match = "order";
+      setS.notice = "Couldn't read sheet numbers on most pages (scanned drawings have no readable text), so sheets are matched by page order. Check the pairs, and re-pair any sheet by hand.";
+    }
+    setS.pairs = buildPairs(setS.idx.A, setS.idx.B, setS.match);
+    setS.cur = 0;
+  }
+}
+
+function applyPairToSlots() {
+  const p = curPair();
+  if (!p) return;
+  slots.A.page = p.a;
+  slots.B.page = p.b;
+}
+
+async function selectPair(i) {
+  if (!setS.on || i < 0 || i >= setS.pairs.length) return;
+  setS.cur = i;
+  applyPairToSlots();
+  selId = null;
+  syncChrome(); renderNotes(); renderSets(); renderPairEditor();
+  changed();
+  await mountBoth(false);
+}
+
+function nextChanged() {
+  const n = setS.pairs.length;
+  for (let k = 1; k <= n; k++) {
+    const i = (setS.cur + k) % n;
+    if (statusOf(setS.pairs[i]) === "changed") { selectPair(i); return; }
+  }
+  const waiting = setS.pairs.some((p) => statusOf(p) === "pending");
+  toast(waiting ? "Still checking sheets" : "No other changed sheets", waiting ? "Try again in a moment." : "", false, 2500);
+}
+
+// Moves a sheet to a different page on one side. A page can belong to only one pair, so it is taken from any other pair.
+function repair(side, page) {
+  const p = curPair();
+  if (!p) return;
+  const other = side === "a" ? "b" : "a";
+  if (!page && !p[other]) { renderPairEditor(); return; }          // a sheet needs at least one side
+  if (p[side] === page) return;
+  if (page) setS.pairs.forEach((q) => { if (q !== p && q[side] === page) { q[side] = 0; q.chg = null; q.manual = true; } });
+  p[side] = page; p.manual = true; p.chg = null;
+  p.num = numberFor(p); p.title = titleFor(p);
+  setS.pairs = setS.pairs.filter((q) => q === p || q.a || q.b);
+  setS.cur = setS.pairs.indexOf(p);
+  applyPairToSlots();
+  syncChrome(); renderNotes(); renderSets(); renderPairEditor();
+  changed();
+  mountBoth(false).then(() => runAnalysis());
+}
+
+/* ---------- change check ---------- */
+function inkMap(data, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let i = 0, j = 0; j < out.length; i += 4, j++) {
+    out[j] = Math.min(data[i], data[i + 1], data[i + 2]) < 170 ? 1 : 0;       // dark or coloured line work counts as ink
+  }
+  return out;
+}
+function dilate(src, w, h) {
+  const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const r = y * w;
+    for (let x = 0; x < w; x++) tmp[r + x] = src[r + x] | (x > 0 ? src[r + x - 1] : 0) | (x < w - 1 ? src[r + x + 1] : 0);
+  }
+  for (let y = 0; y < h; y++) {
+    const r = y * w;
+    for (let x = 0; x < w; x++) out[r + x] = tmp[r + x] | (y > 0 ? tmp[r - w + x] : 0) | (y < h - 1 ? tmp[r + w + x] : 0);
+  }
+  return out;
+}
+
+// How many pixels of line work differ between two sheets, once the title block is left out.
+async function measureChange(pa, pb) {
+  const [pageA, pageB] = await Promise.all([slots.A.doc.getPage(pa), slots.B.doc.getPage(pb)]);
+  const vB = pageB.getViewport({ scale: 1 });
+  const k = WORK_PX / Math.max(vB.width, vB.height);
+  const w = Math.max(50, Math.round(vB.width * k)), h = Math.max(50, Math.round(vB.height * k));
+  const ink = async (page) => {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
+    await renderFit(page, c).promise;
+    const map = inkMap(x.getImageData(0, 0, w, h).data, w, h);
+    c.width = c.height = 0;
+    return map;
+  };
+  const inkA = await ink(pageA);
+  await yieldUI();
+  const inkB = await ink(pageB);
+  const dA = dilate(inkA, w, h), dB = dilate(inkB, w, h);
+  const [rx, ry] = TB_REGION[setS.tb] || TB_REGION.br;
+  const x0 = Math.floor(rx * w), y0 = Math.floor(ry * h);
+  let diff = 0;
+  for (let y = 0; y < h; y++) {
+    const r = y * w;
+    for (let x = 0; x < w; x++) {
+      if (x >= x0 && y >= y0) continue;                              // title block: ignored
+      const i = r + x;
+      if ((inkA[i] && !dB[i]) || (inkB[i] && !dA[i])) diff++;
+    }
+  }
+  return diff;
+}
+
+async function runAnalysis() {
+  if (!setS.on) return;
+  const my = ++setS.run;
+  const todo = setS.pairs.filter((p) => p.a && p.b && p.chg == null);
+  setS.total = todo.length; setS.done = 0;
+  paintProgress();
+  for (const p of todo) {
+    if (my !== setS.run || !cpOn || !setS.on) return;
+    try { p.chg = await measureChange(p.a, p.b); }
+    catch (e) { p.chg = -1; }
+    setS.done++;
+    scheduleSetsList();
+    paintProgress();
+    await yieldUI();
+  }
+  if (my !== setS.run) return;
+  setS.total = 0; setS.done = 0;
+  paintProgress(); renderSets(); renderPairNav();
+  if (todo.length) changed();
+}
+
+/* ---------- sheets panel ---------- */
+let listRaf = 0;
+function scheduleSetsList() {
+  if (listRaf) return;
+  listRaf = requestAnimationFrame(() => { listRaf = 0; renderSetsList(); renderPairNav(); });
+}
+
+function paintProgress() {
+  const el = $("spProgress");
+  const running = setS.total > 0 && setS.done < setS.total;
+  el.classList.toggle("hidden", !running);
+  if (running) {
+    $("spBar").style.width = (setS.done / setS.total) * 100 + "%";
+    $("spProgText").textContent = `Checking for changes… ${setS.done} of ${setS.total}`;
+  }
+}
+
+function renderPairNav() {
+  const on = setS.on;
+  $("pairGroup").classList.toggle("hidden", !on);
+  $("pairRule").classList.toggle("hidden", !on);
+  $("setsToggle").classList.toggle("hidden", !on);
+  if (!on) return;
+  const p = curPair();
+  $("pairInd").textContent = p ? `${p.num || "Sheet"} · ${setS.cur + 1} of ${setS.pairs.length}` : "—";
+  $("pairInd").title = p && p.title ? p.title : "";
+  $("pairPrev").disabled = setS.cur <= 0;
+  $("pairNext").disabled = setS.cur >= setS.pairs.length - 1;
+  $("setsToggleLabel").textContent = `Sheets (${setS.pairs.length})`;
+}
+
+function renderSetsList() {
+  if (!setS.on) return;
+  const counts = { changed: 0, same: 0, onlyA: 0, onlyB: 0, pending: 0, unknown: 0 };
+  setS.pairs.forEach((p) => { counts[statusOf(p)]++; });
+  const bits = [`${counts.changed} changed`, `${counts.same} no change`];
+  if (counts.onlyB) bits.push(`${counts.onlyB} new`);
+  if (counts.onlyA) bits.push(`${counts.onlyA} removed`);
+  if (counts.unknown) bits.push(`${counts.unknown} couldn't be checked`);
+  if (counts.pending) bits.push(`${counts.pending} still checking`);
+  $("spSummary").textContent = `${setS.pairs.length} sheets: ${bits.join(" · ")}`;
+
+  const keep = (p) => {
+    if (setS.filter === "review") return ["changed", "onlyA", "onlyB", "unknown"].includes(statusOf(p));
+    if (setS.filter === "notes") return notesOnPair(p) > 0;
+    return true;
+  };
+  const rows = [];
+  setS.pairs.forEach((p, i) => {
+    if (!keep(p)) return;
+    const st = statusOf(p), nn = notesOnPair(p);
+    rows.push(`<div class="sp-row${i === setS.cur ? " cur" : ""}" data-i="${i}" role="button" tabindex="0">
+      <span class="st st-${st}"></span>
+      <span class="sp-num">${esc(p.num || "Sheet " + (i + 1))}</span>
+      <span class="sp-title">${esc(p.title)}</span>
+      ${nn ? `<span class="sp-n">${nn}</span>` : "<span></span>"}
+      <span class="sp-tag">${esc(STATUS_SHORT[st])}${p.manual ? " · paired by hand" : ""}</span>
+    </div>`);
+  });
+  $("spList").innerHTML = rows.length ? rows.join("") : `<div class="sp-empty">${setS.filter === "notes" ? "No notes yet." : "Nothing to review here."}</div>`;
+  const cur = $("spList").querySelector(".sp-row.cur");
+  if (cur && cur.scrollIntoView && !listRaf) cur.scrollIntoView({ block: "nearest" });
+}
+
+function renderPairEditor() {
+  if (!setS.on) return;
+  const p = curPair();
+  const opts = (idx) => `<option value="0">— none —</option>` +
+    idx.map((e) => `<option value="${e.page}">p.${e.page}${e.number ? " · " + esc(e.number) : ""}</option>`).join("");
+  $("spPairA").innerHTML = opts(setS.idx.A);
+  $("spPairB").innerHTML = opts(setS.idx.B);
+  $("spPairA").value = String(p ? p.a : 0);
+  $("spPairB").value = String(p ? p.b : 0);
+  $("spMatch").value = setS.match;
+  $("spTb").value = setS.tb;
+  $("spNotice").classList.toggle("hidden", !setS.notice);
+  $("spNotice").textContent = setS.notice;
+}
+
+function renderSets() {
+  const on = setS.on;
+  $("setsPanel").classList.toggle("hidden", !on);
+  if (!on) return;
+  renderSetsList();
+  paintProgress();
+}
+
+$("spList").addEventListener("click", (e) => {
+  const r = e.target.closest("[data-i]");
+  if (!r) return;
+  selectPair(parseInt(r.dataset.i, 10));
+  $("setsPanel").classList.remove("open");
+});
+$("spList").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const r = e.target.closest("[data-i]");
+  if (r) { e.preventDefault(); selectPair(parseInt(r.dataset.i, 10)); }
+});
+$("spFilter").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-filter]");
+  if (!b) return;
+  setS.filter = b.dataset.filter;
+  $("spFilter").querySelectorAll("[data-filter]").forEach((x) => x.classList.toggle("on", x === b));
+  renderSetsList();
+});
+$("spPairA").addEventListener("change", (e) => repair("a", parseInt(e.target.value, 10) || 0));
+$("spPairB").addEventListener("change", (e) => repair("b", parseInt(e.target.value, 10) || 0));
+$("pairPrev").addEventListener("click", () => selectPair(setS.cur - 1));
+$("pairNext").addEventListener("click", () => selectPair(setS.cur + 1));
+$("nextChanged").addEventListener("click", nextChanged);
+$("setsToggle").addEventListener("click", () => $("setsPanel").classList.toggle("open"));
+
+$("spMatch").addEventListener("change", (e) => {
+  const v = e.target.value === "order" ? "order" : "number";
+  if (v === setS.match) return;
+  if ((setS.pairs.some((p) => p.manual) || notes.length) &&
+      !confirm("Re-matching starts the pairing over. Your notes stay saved, but they may no longer line up with a sheet. Continue?")) {
+    e.target.value = setS.match;
+    return;
+  }
+  setS.match = v;
+  setS.notice = "";
+  setS.pairs = buildPairs(setS.idx.A, setS.idx.B, v);
+  setS.cur = 0;
+  applyPairToSlots();
+  syncChrome(); renderNotes(); renderSets(); renderPairEditor();
+  changed();
+  mountBoth(false).then(() => runAnalysis());
+});
+$("spTb").addEventListener("change", (e) => {
+  setS.tb = ["br", "right", "none"].includes(e.target.value) ? e.target.value : "br";
+  setS.pairs.forEach((p) => { p.chg = null; });
+  renderSets(); renderPairNav();
+  changed();
+  runAnalysis();
+});
+
+function currentSets() {
+  return {
+    on: true, match: setS.match, tb: setS.tb, cur: setS.cur,
+    pairs: setS.pairs.map((p) => ({ a: p.a, b: p.b, num: p.num, title: p.title, manual: !!p.manual, chg: p.chg })),
+  };
+}
 
 /* ------------------------------------------------------------------ *
  *  Start screen + choosing / replacing / swapping files
@@ -427,8 +903,35 @@ function resetSlots() {
   }
 }
 
+function setStartMode(m) {
+  if (m === startMode) return;
+  startMode = m;
+  resetSlots();
+  showStartMsg("");
+  const sets = m === "sets";
+  $("startModeSingle").classList.toggle("on", !sets);
+  $("startModeSets").classList.toggle("on", sets);
+  $("dzLabelA").textContent = sets ? "Set A" : "Drawing A";
+  $("dzLabelB").textContent = sets ? "Set B" : "Drawing B";
+  $("dzHintA").textContent = $("dzHintB").textContent = sets ? "One PDF per set, one sheet per page" : "PDF, JPG or PNG";
+  $("fileA").accept = $("fileB").accept = sets ? "application/pdf" : "application/pdf,image/*";
+  $("startSub").textContent = sets
+    ? "Pick the older and the newer drawing set. Sheets are matched by sheet number, and each matched pair can be compared. Nothing is stored on the server unless you tap Save."
+    : "Pick the older and the newer drawing. Nothing is saved to a project, and nothing is stored on the server unless you tap Save.";
+}
+$("startModeSingle").addEventListener("click", () => setStartMode("single"));
+$("startModeSets").addEventListener("click", () => setStartMode("sets"));
+
+const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+
 async function setFile(which, file) {
   if (!file) return;
+  const wantSets = cpOn ? setS.on : startMode === "sets";
+  if (wantSets && !isPdf(file)) {
+    const msg = "Whole sets need PDF files, one sheet per page.";
+    if (cpOn) flash("Couldn't use that file", msg); else showStartMsg(msg, true);
+    return;
+  }
   showStartMsg(`Reading ${file.name}…`, false);
   let doc;
   try { doc = await openFile(file); }
@@ -445,10 +948,32 @@ async function setFile(which, file) {
     detachCloud();          // the person already confirmed this when they tapped Replace
     selId = null;
     loadState();            // a different pair of files gets its own notes
+    if (setS.on) {
+      const ok = await rePrepareSets();
+      if (!ok) return;
+    }
     syncChrome(); renderNotes();
     await mountBoth(false);
+    if (setS.on) runAnalysis();
   } else if (slots.A && slots.B) {
-    startCompare();
+    startCompare({ sets: startMode === "sets" });
+  }
+}
+
+async function rePrepareSets() {
+  const ctl = new AbortController();
+  busyShow("Reading sheets…", "Starting…", ctl);
+  try {
+    await prepareSets(readLocalSets(), ctl);
+    busyHide();
+    applyPairToSlots();
+    renderSets(); renderPairEditor();
+    return true;
+  } catch (e) {
+    busyHide();
+    if (e.message !== "Cancelled.") flash("Couldn't read the sheets", e.message);
+    await startOver();
+    return false;
   }
 }
 
@@ -480,20 +1005,45 @@ async function swapAB() {
   detachCloud();
   [slots.A, slots.B] = [slots.B, slots.A];
   notes.forEach((n) => { const t = n.pa; n.pa = n.pb; n.pb = t; });
+  if (setS.on) {
+    setS.pairs.forEach((p) => { const t = p.a; p.a = p.b; p.b = t; });
+    [setS.idx.A, setS.idx.B] = [setS.idx.B, setS.idx.A];
+    renderSets(); renderPairEditor();
+  }
   changed(); syncChrome(); renderNotes();
   await mountBoth(false);
 }
 $("swapBtn").addEventListener("click", swapAB);
 
 async function startCompare(opts = {}) {
+  const wantSets = !!(opts.sets || (opts.state && opts.state.sets && opts.state.sets.on));
+  if (wantSets) {
+    const ctl = new AbortController();
+    busyShow("Reading sheets…", "Starting…", ctl);
+    try {
+      await prepareSets(opts.state ? opts.state.sets : readLocalSets(), ctl);
+      busyHide();
+    } catch (e) {
+      busyHide();
+      detachCloud();
+      resetSlots();
+      setS.on = false;
+      showStartMsg(e.message === "Cancelled." ? "" : "Couldn't read the sheets: " + e.message, e.message !== "Cancelled.");
+      return;
+    }
+  }
+  setS.on = wantSets;
   cpOn = true;
   $("startScreen").classList.add("hidden");
   $("cpApp").classList.remove("hidden");
   $("newBtn").classList.remove("hidden");
   if (opts.state) applyState(opts.state); else loadState();
+  if (setS.on) { applyPairToSlots(); setS.filter = "all"; $("spFilter").querySelectorAll("[data-filter]").forEach((x) => x.classList.toggle("on", x.dataset.filter === "all")); }
+  renderSets(); renderPairEditor();
   syncChrome(); renderNotes(); syncSaveUI();
   await nextFrame();
   await mountBoth(false);
+  if (setS.on) runAnalysis();
 }
 
 async function startOver() {
@@ -506,6 +1056,10 @@ async function startOver() {
   if (!wasCloud) persist();
   cpOn = false;
   mountSeq++;
+  setS.run++;                                  // stops any change check in progress
+  setS.on = false; setS.pairs = []; setS.idx = { A: [], B: [] }; setS.cur = 0; setS.total = 0; setS.done = 0; setS.notice = "";
+  renderSets(); renderPairNav();
+  $("setsPanel").classList.remove("open");
   setNoting(false);
   closeEditor();
   for (const L of [LA, LB]) { cancel(L.baseTask); clearDetail(L); L.page = null; }
@@ -529,7 +1083,8 @@ function currentState() {
     preparedBy: $("preparedBy").value.trim(),
     notes: notes.map((n) => ({ id: n.id, x: n.x, y: n.y, pa: n.pa, pb: n.pb, cat: n.cat, text: n.text, t: n.t })),
     view: { mode: view.mode, p: view.p, opacity: view.opacity },
-    pages: { A: slots.A ? slots.A.page : 1, B: slots.B ? slots.B.page : 1 },
+    pages: { A: slots.A ? Math.max(1, slots.A.page) : 1, B: slots.B ? Math.max(1, slots.B.page) : 1 },
+    sets: setS.on ? currentSets() : { on: false },
   };
 }
 
@@ -584,7 +1139,7 @@ function detachCloud() {
   syncSaveUI();
 }
 
-// Called whenever notes, title, pages or view settings change.
+// Called whenever notes, title, pages, sheet pairs or view settings change.
 function changed() {
   if (!cpOn) return;
   persist();                                   // local copy (only when not saved to the server)
@@ -617,6 +1172,7 @@ function renderSavedList(container, items, { compact = false } = {}) {
     const nn = it.notes || 0;
     const open = compact ? "" :
       `<button class="btn btn-primary" data-act="open" data-id="${esc(it.id)}" style="min-height:40px">Open</button>`;
+    const kind = it.kind === "sets" ? `<span class="sv-kind">Whole sets${it.pairs ? " · " + it.pairs + " sheets" : ""}</span>` : "";
     return `
     <div class="sv-item" data-id="${esc(it.id)}">
       <div class="sv-main">
@@ -625,7 +1181,7 @@ function renderSavedList(container, items, { compact = false } = {}) {
           <span class="cp-chip-tag cp-tag-a">A</span><span class="sv-fn">${esc(it.A.name)}</span>
           <span class="cp-chip-tag cp-tag-b">B</span><span class="sv-fn">${esc(it.B.name)}</span>
         </div>
-        <div class="sv-meta">${nn} note${nn === 1 ? "" : "s"} · ${cloud.fmtBytes((it.A.size || 0) + (it.B.size || 0))} · ${esc(fmtWhen(it.updated))}</div>
+        <div class="sv-meta">${kind}${nn} note${nn === 1 ? "" : "s"} · ${cloud.fmtBytes((it.A.size || 0) + (it.B.size || 0))} · ${esc(fmtWhen(it.updated))}</div>
       </div>
       <div class="sv-actions">
         ${open}
@@ -686,6 +1242,7 @@ async function openSaved(id) {
   busyShow("Opening comparison…", "Starting…", ctl);
   try {
     const { item, state } = await cloud.getComparison(id);
+    if (item.kind === "sets") startMode = "sets";           // so progress messages say "Set A / Set B"
     const files = await cloud.downloadFiles(item, { signal: ctl.signal, onProgress: busyProgress });
     $("busyText").textContent = "Loading the drawings…";
     const dA = await openFile(files.A);
@@ -887,6 +1444,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "+" || e.key === "=") { withAnim(() => zoomAt(S.z * 1.25, S.vw / 2, S.vh / 2)); scheduleDetail(260); }
   else if (e.key === "-") { withAnim(() => zoomAt(S.z / 1.25, S.vw / 2, S.vh / 2)); scheduleDetail(260); }
   else if (e.key === "0") { withAnim(fitView); scheduleDetail(260); }
+  else if (setS.on && e.key === "[") selectPair(setS.cur - 1);
+  else if (setS.on && e.key === "]") selectPair(setS.cur + 1);
 });
 
 /* ------------------------------------------------------------------ *
@@ -1071,8 +1630,14 @@ function pinAt(x, y) {
   return best;
 }
 
-function renderNotes() {
+function whereOf(n) {
+  const zone = `Zone ${zoneOf(n.x, n.y)}`;
+  if (setS.on) return `${sheetOf(n)} · ${zone}`;
   const multi = slots.A && slots.B && (slots.A.doc.numPages > 1 || slots.B.doc.numPages > 1);
+  return multi ? `${zone} · A p.${n.pa} / B p.${n.pb}` : zone;
+}
+
+function renderNotes() {
   $("notesToggleLabel").textContent = `Notes (${notes.length})`;
   $("noteEmpty").classList.toggle("hidden", notes.length > 0);
   $("clearNotes").classList.toggle("hidden", notes.length === 0);
@@ -1080,11 +1645,12 @@ function renderNotes() {
     <div class="np-item cat-${n.cat.toLowerCase()}${n.id === selId ? " sel" : ""}${onThisView(n) ? "" : " off"}" data-id="${n.id}">
       <span class="np-n">${i + 1}</span>
       <div class="np-body">
-        <div class="np-top"><span class="np-cat">${esc(n.cat)}</span><span class="np-where">Zone ${zoneOf(n.x, n.y)}${multi ? ` · A p.${n.pa} / B p.${n.pb}` : ""}</span></div>
+        <div class="np-top"><span class="np-cat">${esc(n.cat)}</span><span class="np-where">${esc(whereOf(n))}</span></div>
         <div class="np-text">${n.text ? esc(n.text) : '<i class="muted">No text</i>'}</div>
       </div>
       <button class="np-edit" data-edit="${n.id}" aria-label="Edit note ${i + 1}"><i class="ph ph-pencil-simple"></i></button>
     </div>`).join("");
+  if (setS.on) renderSetsList();
 }
 
 $("noteList").addEventListener("click", (e) => {
@@ -1099,6 +1665,11 @@ async function focusNote(id) {
   if (!n) return;
   selId = id;
   if (!onThisView(n)) {
+    if (setS.on) {
+      const i = pairIndexOf(n);
+      if (i >= 0) setS.cur = i;
+      renderSets(); renderPairEditor();
+    }
     slots.A.page = n.pa; slots.B.page = n.pb;
     syncChrome();
     await mountBoth(true);
@@ -1126,8 +1697,7 @@ function openEditor(n) {
   edit = n;
   const idx = n.id ? notes.findIndex((x) => x.id === n.id) : -1;
   $("noteDlgTitle").textContent = n.id ? `Note ${idx + 1}` : "New note";
-  const multi = slots.A.doc.numPages > 1 || slots.B.doc.numPages > 1;
-  $("noteDlgSub").textContent = `Zone ${zoneOf(n.x, n.y)}${multi ? ` · A p.${n.pa} / B p.${n.pb}` : ""}`;
+  $("noteDlgSub").textContent = whereOf(n);
   $("noteCat").value = n.cat;
   $("noteText").value = n.text;
   $("noteDelete").classList.toggle("hidden", !n.id);
@@ -1168,12 +1738,24 @@ function persist() {
   if (cloudId || !slots.A || !slots.B) return;
   try {
     const key = stateKey();
-    localStorage.setItem(key, JSON.stringify({ title: $("docTitle").value, preparedBy: $("preparedBy").value, notes, t: Date.now() }));
+    localStorage.setItem(key, JSON.stringify({
+      title: $("docTitle").value, preparedBy: $("preparedBy").value, notes, t: Date.now(),
+      sets: setS.on ? { ...currentSets(), fpA: slots.A.doc.fp } : null,
+    }));
     let idx = JSON.parse(localStorage.getItem(LS_INDEX) || "[]").filter((k) => k !== key);
     idx.push(key);
     while (idx.length > 25) localStorage.removeItem(idx.shift());
     localStorage.setItem(LS_INDEX, JSON.stringify(idx));
   } catch (e) { /* storage full or blocked: notes still work for this session */ }
+}
+// Sheet pairs kept in this browser for these two files (only if A and B are in the same order as before).
+function readLocalSets() {
+  try {
+    const raw = localStorage.getItem(stateKey());
+    if (!raw) return null;
+    const s = JSON.parse(raw).sets;
+    return s && s.on && s.fpA === slots.A.doc.fp ? s : null;
+  } catch (e) { return null; }
 }
 function loadState() {
   notes = [];
@@ -1219,13 +1801,14 @@ function tintCanvas(c, color) {
   x.globalCompositeOperation = "source-over";
 }
 
-function drawPins(ctx, W, H) {
+// Numbered pins for the notes that belong to one pair of pages.
+function drawPins(ctx, W, H, pa, pb) {
   const r = Math.max(14, W / 100);
   ctx.save();
   ctx.font = `700 ${Math.round(r * 1.15)}px Arial, sans-serif`;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   notes.forEach((n, i) => {
-    if (!onThisView(n)) return;
+    if (n.pa !== pa || n.pb !== pb) return;
     const cx = n.x * W, cy = n.y * H;
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = "#5b3fd6"; ctx.fill();
@@ -1235,20 +1818,22 @@ function drawPins(ctx, W, H) {
   ctx.restore();
 }
 
-// Current compare view (with note pins) as one image.
-async function buildOverview(maxPx) {
-  let s = Math.min(Math.sqrt(maxPx / (LB.pw * LB.ph)), 4.2);
-  s = Math.min(s, 7000 / Math.max(LB.pw, LB.ph));
-  const W = Math.max(1, Math.round(LB.pw * s)), H = Math.max(1, Math.round(LB.ph * s));
+// One pair of pages (default: the pair on screen) as a single image, with its note pins.
+async function buildOverview(maxPx, pa = slots.A.page, pb = slots.B.page) {
+  const { pageA, pageB } = await pagePair(pa, pb);
+  const vB = pageB.getViewport({ scale: 1 });
+  let s = Math.min(Math.sqrt(maxPx / (vB.width * vB.height)), 4.2);
+  s = Math.min(s, 7000 / Math.max(vB.width, vB.height));
+  const W = Math.max(1, Math.round(vB.width * s)), H = Math.max(1, Math.round(vB.height * s));
   const out = document.createElement("canvas");
   out.width = W; out.height = H;
   const ctx = out.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-  await renderFit(LB.page, out).promise;
+  await renderFit(pageB, out).promise;
 
   const tmp = document.createElement("canvas");
   tmp.width = W; tmp.height = H;
-  await renderFit(LA.page, tmp).promise;
+  await renderFit(pageA, tmp).promise;
   if (view.mode === "overlay") {
     const col = colors.get();
     tintCanvas(out, col.b);            // Drawing B (newer) in its color
@@ -1268,13 +1853,13 @@ async function buildOverview(maxPx) {
     ctx.fillRect(W * view.p - lw / 2, 0, lw, H);
   }
   tmp.width = tmp.height = 0;
-  drawPins(ctx, W, H);
+  drawPins(ctx, W, H, pa, pb);
   return out;
 }
 
 // Side-by-side crops of the area around one note, from both drawings.
 async function renderCrops(n) {
-  const [pB, pA] = await Promise.all([slots.B.doc.getPage(n.pb), slots.A.doc.getPage(n.pa)]);
+  const { pageA: pA, pageB: pB } = await pagePair(n.pa, n.pb);
   const vB = pB.getViewport({ scale: 1 }), vA = pA.getViewport({ scale: 1 });
   const W0 = 1000, H0 = 1000 * vB.height / vB.width;
   const cw = Math.min(CROP_W, W0), ch = Math.min(cw * CROP_RATIO, H0);
@@ -1308,6 +1893,29 @@ let printUrls = [];
 const titleOrDefault = () =>
   $("docTitle").value.trim() || `${baseName(slots.A.doc.name)} vs ${baseName(slots.B.doc.name)}`;
 
+function setPageStyle(landscape) {
+  let st = $("pageStyle");
+  if (!st) { st = document.createElement("style"); st.id = "pageStyle"; document.head.appendChild(st); }
+  st.textContent = `@page { size: ${landscape ? "landscape" : "portrait"}; margin: 8mm; }`;
+}
+
+const noteRowHtml = (n, i, ua, ub, showSheet) => `<tr>
+  <td class="pn-n">${i + 1}</td>
+  <td class="pn-cat">${esc(n.cat)}</td>
+  <td class="pn-zone">${zoneOf(n.x, n.y)}<span>${showSheet ? esc(sheetOf(n)) : `A p.${n.pa} · B p.${n.pb}`}</span></td>
+  <td class="pn-text">${n.text ? esc(n.text) : ""}</td>
+  <td class="pn-img"><img src="${ua}" alt=""></td>
+  <td class="pn-img"><img src="${ub}" alt=""></td></tr>`;
+const NOTE_HEAD = `<thead><tr><th>#</th><th>Type</th><th>Zone</th><th>Note</th><th>Drawing A</th><th>Drawing B</th></tr></thead>`;
+
+async function cropUrls(n, urls) {
+  const { a, b } = await renderCrops(n);
+  const ua = URL.createObjectURL(await canvasBlob(a)); a.width = a.height = 0;
+  const ub = URL.createObjectURL(await canvasBlob(b)); b.width = b.height = 0;
+  urls.push(ua, ub);
+  return [ua, ub];
+}
+
 async function doPrint() {
   if (!cpOn || !LB.page || !LA.page) return;
   const btn = $("printBtn"), label = btn.querySelector("span");
@@ -1316,49 +1924,8 @@ async function doPrint() {
   if (label) label.textContent = "Preparing…";
   const urls = [];
   try {
-    const canvas = await buildOverview(PRINT_MAXPX);
-    const landscape = canvas.width >= canvas.height;
-    const ovUrl = URL.createObjectURL(await canvasBlob(canvas));
-    canvas.width = canvas.height = 0;
-    urls.push(ovUrl);
-
-    const rows = [];
-    for (let i = 0; i < notes.length; i++) {
-      const n = notes[i];
-      const { a, b } = await renderCrops(n);
-      const ua = URL.createObjectURL(await canvasBlob(a)); a.width = a.height = 0;
-      const ub = URL.createObjectURL(await canvasBlob(b)); b.width = b.height = 0;
-      urls.push(ua, ub);
-      rows.push(`<tr>
-        <td class="pn-n">${i + 1}</td>
-        <td class="pn-cat">${esc(n.cat)}</td>
-        <td class="pn-zone">${zoneOf(n.x, n.y)}<span>A p.${n.pa} · B p.${n.pb}</span></td>
-        <td class="pn-text">${n.text ? esc(n.text) : ""}</td>
-        <td class="pn-img"><img src="${ua}" alt=""></td>
-        <td class="pn-img"><img src="${ub}" alt=""></td></tr>`);
-    }
-
-    const printed = new Date().toLocaleDateString();
-    const modeText = view.mode === "overlay"
-      ? colors.overlayText("A", "B")
-      : "Slider: A is left of the line, B is right of it";
-    const by = $("preparedBy").value.trim();
-    $("printHead").innerHTML =
-      `<div class="ph-title"><b>${esc(titleOrDefault())}</b></div>` +
-      `<div class="ph-sub">A (before): ${esc(slots.A.doc.name)} · B (after): ${esc(slots.B.doc.name)}</div>` +
-      `<div class="ph-sub">${esc(modeText)} · ${by ? "Prepared by " + esc(by) + " · " : ""}Printed ${esc(printed)}</div>`;
-    $("printNotes").innerHTML = notes.length
-      ? `<div class="pn-title">Notes (${notes.length})</div>
-         <table class="pn-table"><thead><tr><th>#</th><th>Type</th><th>Zone</th><th>Note</th><th>Drawing A</th><th>Drawing B</th></tr></thead>
-         <tbody>${rows.join("")}</tbody></table>
-         <div class="pn-foot">${esc(ZONE_NOTE)}</div>`
-      : `<div class="pn-title">No notes recorded</div>`;
-
-    let st = $("pageStyle");
-    if (!st) { st = document.createElement("style"); st.id = "pageStyle"; document.head.appendChild(st); }
-    st.textContent = `@page { size: ${landscape ? "landscape" : "portrait"}; margin: 8mm; }`;
-
-    $("printImg").src = ovUrl;
+    if (setS.on) await buildSetPrint(urls);
+    else await buildSinglePrint(urls);
     printUrls.forEach((u) => URL.revokeObjectURL(u));
     printUrls = urls;
     await Promise.all([...$("printArea").querySelectorAll("img")].map((im) => im.decode().catch(() => {})));
@@ -1371,6 +1938,102 @@ async function doPrint() {
     if (label) label.textContent = prev;
   }
 }
+
+async function buildSinglePrint(urls) {
+  $("printArea").classList.remove("sets-print");
+  const canvas = await buildOverview(PRINT_MAXPX);
+  const landscape = canvas.width >= canvas.height;
+  const ovUrl = URL.createObjectURL(await canvasBlob(canvas));
+  canvas.width = canvas.height = 0;
+  urls.push(ovUrl);
+
+  const rows = [];
+  for (let i = 0; i < notes.length; i++) {
+    const [ua, ub] = await cropUrls(notes[i], urls);
+    rows.push(noteRowHtml(notes[i], i, ua, ub, false));
+  }
+
+  const printed = new Date().toLocaleDateString();
+  const modeText = view.mode === "overlay"
+    ? colors.overlayText("A", "B")
+    : "Slider: A is left of the line, B is right of it";
+  const by = $("preparedBy").value.trim();
+  $("printHead").innerHTML =
+    `<div class="ph-title"><b>${esc(titleOrDefault())}</b></div>` +
+    `<div class="ph-sub">A (before): ${esc(slots.A.doc.name)} · B (after): ${esc(slots.B.doc.name)}</div>` +
+    `<div class="ph-sub">${esc(modeText)} · ${by ? "Prepared by " + esc(by) + " · " : ""}Printed ${esc(printed)}</div>`;
+  $("printNotes").innerHTML = notes.length
+    ? `<div class="pn-title">Notes (${notes.length})</div>
+       <table class="pn-table">${NOTE_HEAD}<tbody>${rows.join("")}</tbody></table>
+       <div class="pn-foot">${esc(ZONE_NOTE)}</div>`
+    : `<div class="pn-title">No notes recorded</div>`;
+  setPageStyle(landscape);
+  $("printImg").src = ovUrl;
+}
+
+// A whole set: a summary of every sheet, then one section per sheet that has notes.
+async function buildSetPrint(urls) {
+  $("printArea").classList.add("sets-print");
+  $("printImg").removeAttribute("src");
+
+  const groups = [];
+  const seen = new Set();
+  setS.pairs.forEach((p) => {
+    const list = notes.filter((n) => n.pa === p.a && n.pb === p.b);
+    if (!list.length) return;
+    list.forEach((n) => seen.add(n.id));
+    groups.push({ num: p.num, title: p.title, status: STATUS_TEXT[statusOf(p)], pa: p.a, pb: p.b, list });
+  });
+  const orphans = notes.filter((n) => !seen.has(n.id));
+  if (orphans.length) groups.push({ num: "Other notes", title: "", status: "", list: orphans, noImage: true });
+
+  let landscape = true, first = true;
+  const sections = [];
+  for (const g of groups) {
+    let imgHtml = "";
+    if (!g.noImage) {
+      const canvas = await buildOverview(SET_PRINT_MAXPX, g.pa, g.pb);
+      if (first) { landscape = canvas.width >= canvas.height; first = false; }
+      const u = URL.createObjectURL(await canvasBlob(canvas));
+      canvas.width = canvas.height = 0;
+      urls.push(u);
+      imgHtml = `<img class="ps-img" src="${u}" alt="">`;
+    }
+    const rows = [];
+    for (const n of g.list) {
+      const [ua, ub] = await cropUrls(n, urls);
+      rows.push(noteRowHtml(n, notes.indexOf(n), ua, ub, g.noImage));
+    }
+    sections.push(`<section class="ps-sec">
+      <div class="ps-head"><b>${esc(g.num)}</b>${g.title ? " — " + esc(g.title) : ""} <span>${esc(g.status)}</span></div>
+      ${imgHtml}
+      <table class="pn-table">${NOTE_HEAD}<tbody>${rows.join("")}</tbody></table>
+    </section>`);
+  }
+
+  const sumRows = setS.pairs.map((p) => `<tr>
+    <td class="pn-n">${esc(p.num)}</td><td class="pn-text">${esc(p.title)}</td>
+    <td class="pn-cat">${esc(STATUS_TEXT[statusOf(p)])}</td>
+    <td class="pn-n">${p.a ? "p." + p.a : "–"}</td><td class="pn-n">${p.b ? "p." + p.b : "–"}</td>
+    <td class="pn-n">${notesOnPair(p)}</td></tr>`).join("");
+
+  const printed = new Date().toLocaleDateString();
+  const modeText = view.mode === "overlay"
+    ? colors.overlayText("A", "B")
+    : "Slider: A is left of the line, B is right of it";
+  const by = $("preparedBy").value.trim();
+  $("printHead").innerHTML =
+    `<div class="ph-title"><b>${esc(titleOrDefault())}</b></div>` +
+    `<div class="ph-sub">Set A (before): ${esc(slots.A.doc.name)} · ${slots.A.doc.numPages} sheets · Set B (after): ${esc(slots.B.doc.name)} · ${slots.B.doc.numPages} sheets</div>` +
+    `<div class="ph-sub">${esc(modeText)} · ${by ? "Prepared by " + esc(by) + " · " : ""}Printed ${esc(printed)}</div>`;
+  $("printNotes").innerHTML =
+    `<div class="pn-title">Sheets (${setS.pairs.length})</div>
+     <table class="pn-table ps-sum"><thead><tr><th>Sheet</th><th>Title</th><th>Status</th><th>Set A</th><th>Set B</th><th>Notes</th></tr></thead><tbody>${sumRows}</tbody></table>
+     <div class="pn-foot">Change flags compare a reduced picture of each sheet and are a guide, not proof. ${esc(ZONE_NOTE)}</div>
+     ${sections.join("")}`;
+  setPageStyle(landscape);
+}
+
 $("printBtn").addEventListener("click", doPrint);
 window.addEventListener("afterprint", () => {
   setTimeout(() => {
@@ -1378,6 +2041,7 @@ window.addEventListener("afterprint", () => {
     printUrls = [];
     $("printImg").removeAttribute("src");
     $("printNotes").innerHTML = "";
+    $("printArea").classList.remove("sets-print");
   }, 1500);
 });
 
@@ -1398,6 +2062,14 @@ document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".cp-men
 function buildCtx() {
   const now = new Date();
   const title = titleOrDefault();
+  const sets = setS.on;
+  const list = notes.map((n, i) => {
+    const si = sets ? pairIndexOf(n) : 0;
+    return { n: i + 1, id: n.id, cat: n.cat, text: n.text, zone: zoneOf(n.x, n.y),
+             x: n.x, y: n.y, pageA: n.pa, pageB: n.pb, created: n.t,
+             sheet: sets ? sheetOf(n) : "", sheetIdx: sets ? (si >= 0 ? si : 9999) : 0 };
+  });
+  if (sets) list.sort((a, b) => a.sheetIdx - b.sheetIdx || a.n - b.n);
   return {
     title,
     preparedBy: $("preparedBy").value.trim(),
@@ -1406,12 +2078,18 @@ function buildCtx() {
     slug: title.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "Drawing_Comparison",
     zoneNote: ZONE_NOTE,
     mode: view.mode,
+    setMode: sets,
     overlayNote: colors.overlayText("A", "B") + ".",
     fileA: { name: slots.A.doc.name, page: slots.A.page, pages: slots.A.doc.numPages },
     fileB: { name: slots.B.doc.name, page: slots.B.page, pages: slots.B.doc.numPages },
-    notes: notes.map((n, i) => ({ n: i + 1, id: n.id, cat: n.cat, text: n.text, zone: zoneOf(n.x, n.y),
-                                   x: n.x, y: n.y, pageA: n.pa, pageB: n.pb, created: n.t })),
-    async getOverview(maxPx = 3e6) { return canvasBytes(await buildOverview(maxPx)); },
+    sheets: sets ? setS.pairs.map((p, idx) => {
+      const st = statusOf(p);
+      return { idx, num: p.num, title: p.title, status: st, statusText: STATUS_TEXT[st], a: p.a, b: p.b, notes: notesOnPair(p) };
+    }) : null,
+    notes: list,
+    async getOverview(maxPx = 3e6, pa, pb) {
+      return canvasBytes(await buildOverview(maxPx, pa == null ? slots.A.page : pa, pb == null ? slots.B.page : pb));
+    },
     async getCrops(note) {
       const src = notes.find((x) => x.id === note.id);
       const { a, b } = await renderCrops(src);
