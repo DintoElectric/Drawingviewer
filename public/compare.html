@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="./app.css">
 <link rel="stylesheet" href="./cmp-colors.css">
+<link rel="stylesheet" href="./cmp-sets.css">
 <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
 <!-- pdf.js (classic build exposes the global pdfjsLib) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -24,25 +25,33 @@
     <button class="btn btn-secondary hidden" id="newBtn" style="min-height:36px"><i class="ph ph-arrow-counter-clockwise"></i>Close comparison</button>
   </div>
 
-  <!-- STEP 1: choose two drawings, or reopen a saved comparison -->
+  <!-- STEP 1: choose two drawings (or two sets), or reopen a saved comparison -->
   <div class="cp-start" id="startScreen">
     <div class="cp-start-inner">
       <div class="cp-start-head">
-        <div class="cp-start-title">Compare two drawings</div>
-        <div class="cp-start-sub">Pick the older and the newer drawing. Nothing is saved to a project, and nothing is stored on the server unless you tap Save.</div>
+        <div class="cp-start-title">Compare drawings</div>
+        <div class="cp-start-sub" id="startSub">Pick the older and the newer drawing. Nothing is saved to a project, and nothing is stored on the server unless you tap Save.</div>
       </div>
+
+      <div class="cp-modes">
+        <div class="seg" role="group" aria-label="What are you comparing?">
+          <button class="seg-btn on" id="startModeSingle"><i class="ph ph-file"></i><span>One drawing each</span></button>
+          <button class="seg-btn" id="startModeSets"><i class="ph ph-files"></i><span>Whole sets</span></button>
+        </div>
+      </div>
+
       <div class="cp-drops">
         <label class="cp-drop" id="dzA" for="fileA">
           <i class="ph ph-file-arrow-up"></i>
-          <div class="cp-drop-label">Drawing A <span>older / before</span></div>
+          <div class="cp-drop-label"><span id="dzLabelA">Drawing A</span> <span>older / before</span></div>
           <div class="cp-drop-file" id="dzNameA">Tap to choose, or drop a file here</div>
-          <div class="cp-drop-hint">PDF, JPG or PNG</div>
+          <div class="cp-drop-hint" id="dzHintA">PDF, JPG or PNG</div>
         </label>
         <label class="cp-drop" id="dzB" for="fileB">
           <i class="ph ph-file-arrow-up"></i>
-          <div class="cp-drop-label">Drawing B <span>newer / after</span></div>
+          <div class="cp-drop-label"><span id="dzLabelB">Drawing B</span> <span>newer / after</span></div>
           <div class="cp-drop-file" id="dzNameB">Tap to choose, or drop a file here</div>
-          <div class="cp-drop-hint">PDF, JPG or PNG</div>
+          <div class="cp-drop-hint" id="dzHintB">PDF, JPG or PNG</div>
         </label>
       </div>
       <div class="cp-start-msg hidden" id="startMsg"></div>
@@ -99,8 +108,19 @@
       </div>
     </div>
 
-    <!-- tools: zoom, compare mode, notes, save, print / export -->
+    <!-- tools: sheet navigation, zoom, compare mode, notes, save, print / export -->
     <div class="vtools" id="vtools">
+      <!-- whole sets only: step through the matched sheets -->
+      <div class="tgroup hidden" id="pairGroup">
+        <button class="tbtn" id="pairPrev" aria-label="Previous sheet" title="Previous sheet ( [ )"><i class="ph ph-caret-left"></i></button>
+        <span class="pair-ind" id="pairInd">—</span>
+        <button class="tbtn" id="pairNext" aria-label="Next sheet" title="Next sheet ( ] )"><i class="ph ph-caret-right"></i></button>
+        <button class="tbtn tbtn-text" id="nextChanged" title="Jump to the next changed sheet"><i class="ph ph-skip-forward"></i><span>Next change</span></button>
+      </div>
+      <button class="tbtn tbtn-text cp-sets-toggle hidden" id="setsToggle"><i class="ph ph-squares-four"></i><span id="setsToggleLabel">Sheets</span></button>
+
+      <div class="vrule hidden" id="pairRule"></div>
+
       <div class="tgroup">
         <button class="tbtn" id="zoomOut" aria-label="Zoom out"><i class="ph ph-magnifying-glass-minus"></i></button>
         <button class="tbtn tbtn-text zoom-level" id="zoomLevel" title="Fit to screen">100%</button>
@@ -147,6 +167,47 @@
     </div>
 
     <div class="vshell">
+      <!-- whole sets only: every matched sheet, with its change status -->
+      <aside class="sets-panel hidden" id="setsPanel">
+        <div class="h-label">Sheets</div>
+        <div class="sp-summary" id="spSummary"></div>
+        <div class="sp-progress hidden" id="spProgress">
+          <div class="cp-bar"><div class="cp-bar-fill" id="spBar"></div></div>
+          <div class="sp-prog-text" id="spProgText"></div>
+        </div>
+        <div class="seg sp-filter" id="spFilter" role="group" aria-label="Filter sheets">
+          <button class="seg-btn on" data-filter="all">All</button>
+          <button class="seg-btn" data-filter="review">To review</button>
+          <button class="seg-btn" data-filter="notes">With notes</button>
+        </div>
+        <div class="sp-notice hidden" id="spNotice"></div>
+        <div class="sp-list" id="spList"></div>
+
+        <div class="sp-pair" id="spPair">
+          <div class="sp-pair-title">Pair this sheet with</div>
+          <label class="field-lbl" for="spPairA">Set A page</label>
+          <select class="input" id="spPairA"></select>
+          <label class="field-lbl" for="spPairB">Set B page</label>
+          <select class="input" id="spPairB"></select>
+        </div>
+
+        <details class="sp-adv">
+          <summary>Matching options</summary>
+          <label class="field-lbl" for="spMatch">Match sheets by</label>
+          <select class="input" id="spMatch">
+            <option value="number">Sheet number</option>
+            <option value="order">Page order</option>
+          </select>
+          <label class="field-lbl" for="spTb">Title block (left out when checking for changes)</label>
+          <select class="input" id="spTb">
+            <option value="br">Bottom-right corner</option>
+            <option value="right">Right-hand strip</option>
+            <option value="none">Don't leave anything out</option>
+          </select>
+        </details>
+        <div class="sp-foot">Change flags compare a reduced picture of each sheet. They are a guide, not proof, so open any sheet that matters.</div>
+      </aside>
+
       <div class="canvas" id="viewport">
         <div class="stage" id="stage">
           <canvas id="cvB"></canvas>
@@ -250,7 +311,7 @@
     </div>
   </div>
 
-  <!-- progress for saving / opening / exporting big files -->
+  <!-- progress for saving / opening / reading sheets / exporting big files -->
   <div class="backdrop hidden" id="busy">
     <div class="modal cp-dlg cp-busy" role="alertdialog" aria-modal="true" aria-labelledby="busyTitle">
       <div class="m-body cp-dlg-body" style="padding-top:20px">
