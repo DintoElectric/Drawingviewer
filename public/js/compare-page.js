@@ -58,7 +58,7 @@ colors.bindButton($("colorBtn"));
 
 /* ---------- limits (conservative for iPad Safari canvas memory) ---------- */
 const MIN_Z = 0.4, MAX_Z = 12;
-const BASE_MAX_PX = 8e6;
+const BASE_MAX_PX = 4e6;               // sheet bitmap cap: keeps sheets quick to draw and turn (zooming re-renders sharply)
 const DETAIL_MAX_PX = 9e6;
 const PRINT_MAXPX = 8e6;
 const SET_PRINT_MAXPX = 4e6;             // per-sheet overview when printing a whole set
@@ -66,10 +66,12 @@ const CROP_W = 300, CROP_RATIO = 0.75, CROP_K = 2.4;   // crop region in stage u
 const ZCOLS = 8, ZROWS = 6;
 
 // whole-set change checking
-const WORK_PX = 1800;                    // long side of the reduced picture used to look for changes
-const CHG_MIN_PX = 70;                   // fewer different pixels than this = "no visible change"
+const WORK_PX = 1400;                    // long side of the reduced picture used to look for changes
+const CHG_MIN_PX = 45;                   // fewer different pixels than this = "no visible change"
 const SHEET_RE = /^[A-Z]{1,3}[-. ]?\d{1,3}(?:\.\d{1,3})?[A-Z]?$/;   // E-101, E101, ES-001, E-101.1, E-101A
 const TB_REGION = { br: [0.72, 0.72], right: [0.82, 0], none: [2, 2] };   // [left edge, top edge] left out of the check
+const LOOK_PX = 220, LOOK_GX = 32, LOOK_GY = 24, LOOK_MIN = 0.45;   // matching sheets by how they look, when numbers can't be read
+const CACHE_MAX = 8;                     // finished sheet bitmaps kept so turning back and forth is instant
 
 /* ---------- state ---------- */
 const S = { z: 1, tx: 0, ty: 0, vw: 800, vh: 600, W0: 800, H0: 600 };
@@ -88,7 +90,9 @@ let savedData = null;                    // last list shown on the start screen
 // whole sets
 const setS = { on: false, match: "number", tb: "br", pairs: [], cur: 0, idx: { A: [], B: [] },
                filter: "all", run: 0, done: 0, total: 0, notice: "" };
-let startMode = "single";                // what the start screen is set up for: "single" | "sets"
+let bgRun = 0, bgTask = null;            // background work (preparing neighbouring sheets, checking for changes)
+let mountBusy = false, lastNav = 0;
+const baseCache = new Map();             // finished sheet bitmaps, newest last
 
 // Saved lists can lag a moment behind changes on the server, so remember what was
 // saved / deleted / renamed during this visit and apply it to every list we show.
@@ -147,7 +151,7 @@ async function openFile(file) {
     try {
       const buf = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
-      return { name: file.name, fp, file, numPages: pdf.numPages, getPage: (n) => pdf.getPage(n),
+      return { name: file.name, fp, file, isPdf: true, numPages: pdf.numPages, getPage: (n) => pdf.getPage(n),
                destroy() { try { pdf.destroy(); } catch (e) {} } };
     } catch (e) {
       if (e && e.name === "PasswordException") throw new Error("That PDF is password-protected.");
@@ -163,7 +167,7 @@ async function openFile(file) {
   try { await img.decode(); }
   catch (e) { URL.revokeObjectURL(url); throw new Error("Couldn't read that image. Try a PDF, JPG or PNG."); }
   const page = imagePage(img);
-  return { name: file.name, fp, file, numPages: 1, getPage: async () => page, destroy() { URL.revokeObjectURL(url); } };
+  return { name: file.name, fp, file, isPdf: false, numPages: 1, getPage: async () => page, destroy() { URL.revokeObjectURL(url); } };
 }
 
 // The two pages of a pair. A missing side (page 0) becomes a blank sheet the size of the other one.
@@ -189,7 +193,7 @@ function makeLayer(canvas, cls, tintCls) {
   tint.className = `tint ${tintCls}`;
   el.appendChild(tint);
   return { el, canvas, tint, detail: null, page: null, pw: 0, ph: 0, box: null,
-           dens: 1, baseTask: null, detailTask: null, gen: 0, dgen: 0 };
+           dens: 1, baseTask: null, detailTask: null, gen: 0, dgen: 0, pid: null, cacheKey: null, blank: false };
 }
 const LB = makeLayer($("cvB"), "layer-b", "tint-b");   // Drawing B (newer) underneath
 const LA = makeLayer($("cvA"), "layer-a", "tint-a");   // Drawing A (older) on top, clipped / blended
@@ -262,9 +266,12 @@ async function setLayer(L, doc, pageNum, like) {
     const w = like && like.pw ? like.pw : 612, h = like && like.ph ? like.ph : 792;
     L.page = blankPage(w, h);
     L.pw = w; L.ph = h;
+    L.pid = null; L.blank = true;
     return;
   }
-  L.page = await doc.getPage(clamp(pageNum, 1, doc.numPages));
+  const pn = clamp(pageNum, 1, doc.numPages);
+  L.page = await doc.getPage(pn);
+  L.pid = `${doc.fp}#${pn}`; L.blank = false;
   const vp = L.page.getViewport({ scale: 1 });
   L.pw = vp.width; L.ph = vp.height;
 }
@@ -274,28 +281,59 @@ function clearDetail(L) {
   if (L.detail) { L.detail.remove(); L.detail = null; }
 }
 
+// Size of the finished bitmap for a sheet drawn into box b (same rule everywhere, so prepared sheets can be reused).
+function rasterFor(b) {
+  const dens = Math.max(0.5, Math.min(dpr(), Math.sqrt(BASE_MAX_PX / (b.w * b.h))));
+  return { w: Math.max(1, Math.round(b.w * dens)), h: Math.max(1, Math.round(b.h * dens)) };
+}
+const rasterKey = (pid, r) => `${pid}@${r.w}x${r.h}`;
+function newRaster(r) {
+  const c = document.createElement("canvas");
+  c.width = r.w; c.height = r.h;
+  c.dataset.keep = "1";
+  return c;
+}
+function freeCanvas(c) { try { c.width = c.height = 0; } catch (e) { /* ignore */ } }
+function takeCache(key) { const c = baseCache.get(key); if (c) baseCache.delete(key); return c || null; }
+function putCache(key, c) {
+  if (baseCache.has(key)) { freeCanvas(baseCache.get(key)); baseCache.delete(key); }
+  baseCache.set(key, c);
+  while (baseCache.size > CACHE_MAX) { const k = baseCache.keys().next().value; freeCanvas(baseCache.get(k)); baseCache.delete(k); }
+}
+function clearCache() { baseCache.forEach(freeCanvas); baseCache.clear(); }
+
 async function renderBase(L) {
   if (!L.page) return;
   const my = ++L.gen;
   cancel(L.baseTask); L.baseTask = null;
   clearDetail(L);
   const b = boxFor(L); L.box = b;
-  let dens = Math.min(dpr() * 1.5, Math.sqrt(BASE_MAX_PX / (b.w * b.h)));
-  dens = Math.max(dens, 0.5);
-  const c = document.createElement("canvas");
-  c.width = Math.max(1, Math.round(b.w * dens));
-  c.height = Math.max(1, Math.round(b.h * dens));
-  c.style.left = b.x + "px"; c.style.top = b.y + "px";
-  c.style.width = b.w + "px"; c.style.height = b.h + "px";
-  L.dens = c.width / b.w;
+  const r = rasterFor(b);
+  const key = L.pid ? rasterKey(L.pid, r) : null;
+  const place = (c) => {
+    c.style.left = b.x + "px"; c.style.top = b.y + "px";
+    c.style.width = b.w + "px"; c.style.height = b.h + "px";
+    L.dens = c.width / b.w;
+  };
+  // already showing exactly this sheet at this size: nothing to draw
+  if (key && L.cacheKey === key && L.canvas && L.canvas.dataset.keep && L.canvas.width) { place(L.canvas); return; }
+  const finish = (c) => {
+    place(c);
+    const old = L.canvas;
+    L.el.replaceChild(c, old);              // swap in only when finished, so there's no blank flash
+    if (old && old.dataset.keep) { if (L.cacheKey && old.width) putCache(L.cacheKey, old); else freeCanvas(old); }
+    L.canvas = c; L.cacheKey = key;
+  };
+  const hit = key ? takeCache(key) : null;   // a sheet prepared earlier appears instantly
+  if (hit) { finish(hit); return; }
+  const c = newRaster(r);
   const task = renderFit(L.page, c);
   L.baseTask = task;
   try { await task.promise; }
-  catch (e) { if (my !== L.gen || e?.name === "RenderingCancelledException") return; throw e; }
-  if (my !== L.gen) return;
+  catch (e) { freeCanvas(c); if (my !== L.gen || e?.name === "RenderingCancelledException") return; throw e; }
+  if (my !== L.gen) { freeCanvas(c); return; }
   L.baseTask = null;
-  L.el.replaceChild(c, L.canvas);   // swap in only when finished, so there's no blank flash
-  L.canvas = c;
+  finish(c);
 }
 
 let detailTimer = null;
@@ -349,6 +387,14 @@ async function renderDetail(L) {
 let mountSeq = 0;
 async function mountBoth(keep) {
   const my = ++mountSeq;
+  bgRun++; cancel(bgTask);                   // anything running in the background steps aside
+  mountBusy = true; lastNav = performance.now();
+  try { await mountInner(my, keep); }
+  finally { if (my === mountSeq) { mountBusy = false; lastNav = performance.now(); } }
+  if (my === mountSeq && setS.on && cpOn) background();
+}
+
+async function mountInner(my, keep) {
   try {
     if (slots.B.page) {
       await setLayer(LB, slots.B.doc, slots.B.page);
@@ -450,7 +496,7 @@ function busyShow(title, text, ctl) {
 }
 function busyProgress(p) {
   const verb = p.phase === "upload" ? "Saving" : "Downloading";
-  const what = p.which === "A" ? setS.on || startMode === "sets" ? "Set A" : "Drawing A" : setS.on || startMode === "sets" ? "Set B" : "Drawing B";
+  const what = (setS.on ? "Set " : "Drawing ") + p.which;
   $("busyText").textContent = `${verb} ${what}… ${cloud.fmtBytes(p.done)} of ${cloud.fmtBytes(p.total)}`;
   $("busyBar").style.width = Math.min(100, p.total ? (p.done / p.total) * 100 : 0) + "%";
 }
@@ -497,8 +543,8 @@ function pickSheet(page, items) {
   const best = pool[0];
   if (!best) return { page, number: "", title: "" };
   const LABEL = /^(sheet|title|date|scale|drawn|checked|project|revision|rev|no\.?|number|job|drawing|dwg)\b/i;
-  const near = items.filter((i) => i !== best && Math.abs(i.x - best.x) < 0.25 && i.y < best.y + 0.02 && i.y > best.y - 0.15 &&
-    i.size >= best.size * 0.5 && i.s.length >= 4 && !LABEL.test(i.s) && !SHEET_RE.test(i.s.toUpperCase()));
+  const near = items.filter((i) => i !== best && Math.abs(i.x - best.x) < 0.25 && i.y < best.y + 0.08 && i.y > best.y - 0.15 &&
+    i.size >= best.size * 0.3 && i.s.length >= 4 && !LABEL.test(i.s) && !SHEET_RE.test(i.s.toUpperCase()));
   near.sort((a, b) => a.y - b.y || a.x - b.x);
   return {
     page,
@@ -579,37 +625,158 @@ function titleFor(p) {
   return tb || ta || "";
 }
 
+// How a sheet looks (a coarse grid of line density) and which words it contains. Used to match sheets
+// whose number couldn't be read, e.g. scanned sets or unusual title blocks.
+async function fingerprintPage(doc, n) {
+  const page = await doc.getPage(n);
+  const v = page.getViewport({ scale: 1 });
+  const k = LOOK_PX / Math.max(v.width, v.height);
+  const w = Math.max(16, Math.round(v.width * k)), h = Math.max(16, Math.round(v.height * k));
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const x = c.getContext("2d", { willReadFrequently: true });
+  x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
+  await renderFit(page, c).promise;
+  const d = x.getImageData(0, 0, w, h).data;
+  c.width = c.height = 0;
+  const [rx, ry] = TB_REGION[setS.tb] || TB_REGION.br;
+  const vec = new Float32Array(LOOK_GX * LOOK_GY), cnt = new Float32Array(LOOK_GX * LOOK_GY);
+  for (let yy = 0; yy < h; yy++) {
+    const gy = Math.min(LOOK_GY - 1, Math.floor((yy / h) * LOOK_GY));
+    for (let xx = 0; xx < w; xx++) {
+      const g = gy * LOOK_GX + Math.min(LOOK_GX - 1, Math.floor((xx / w) * LOOK_GX));
+      cnt[g]++;
+      if (xx >= rx * w && yy >= ry * h) continue;                        // title block left out
+      const i = (yy * w + xx) * 4;
+      vec[g] += (255 - Math.min(d[i], d[i + 1], d[i + 2])) / 255;
+    }
+  }
+  for (let g = 0; g < vec.length; g++) vec[g] = cnt[g] ? vec[g] / cnt[g] : 0;
+  const toks = new Set();
+  try {
+    const tc = await page.getTextContent();
+    for (const it of tc.items) String(it.str || "").toUpperCase().split(/[^A-Z0-9]+/).forEach((t) => { if (t.length >= 3) toks.add(t); });
+  } catch (e) { /* scans have no text */ }
+  return { vec, toks };
+}
+
+// Pairs up pages from the two lists that look alike. Returns [{i, j, score}] (indexes into leftA / leftB).
+async function matchByLook(leftA, leftB, tick, signal) {
+  const fa = [], fb = [];
+  for (const p of leftA) { if (signal && signal.aborted) throw new Error("Cancelled."); fa.push(await fingerprintPage(slots.A.doc, p.a)); tick(); await yieldUI(); }
+  for (const p of leftB) { if (signal && signal.aborted) throw new Error("Cancelled."); fb.push(await fingerprintPage(slots.B.doc, p.b)); tick(); await yieldUI(); }
+  const all = [...fa, ...fb];
+  const cells = LOOK_GX * LOOK_GY;
+  // take out what every sheet has in common (border, title block): only meaningful with enough sheets to average
+  if (all.length >= 6) {
+    const mean = new Float32Array(cells);
+    all.forEach((f) => { for (let i = 0; i < cells; i++) mean[i] += f.vec[i] / all.length; });
+    all.forEach((f) => { for (let i = 0; i < cells; i++) f.vec[i] -= mean[i]; });
+  }
+  all.forEach((f) => {
+    let n = 0;
+    for (let i = 0; i < cells; i++) n += f.vec[i] * f.vec[i];
+    n = Math.sqrt(n) || 1;
+    for (let i = 0; i < cells; i++) f.vec[i] /= n;
+  });
+  // words found on most sheets say nothing about which sheet this is
+  const df = new Map();
+  all.forEach((f) => f.toks.forEach((t) => df.set(t, (df.get(t) || 0) + 1)));
+  const maxDf = Math.max(2, 0.4 * all.length);
+  all.forEach((f) => { f.words = new Set([...f.toks].filter((t) => df.get(t) <= maxDf)); });
+
+  const cands = [];
+  fa.forEach((a, i) => fb.forEach((b, j) => {
+    let vis = 0;
+    for (let k = 0; k < cells; k++) vis += a.vec[k] * b.vec[k];
+    vis = Math.max(0, vis);
+    let score = all.length >= 6 ? vis : vis * 0.6;                    // too few sheets to average: be stricter
+    if (a.words.size >= 5 && b.words.size >= 5) {
+      let inter = 0;
+      a.words.forEach((t) => { if (b.words.has(t)) inter++; });
+      score = 0.5 * vis + 0.5 * (inter / (a.words.size + b.words.size - inter));
+    }
+    cands.push({ i, j, score });
+  }));
+  cands.sort((x, y) => y.score - x.score);
+  const usedA = new Set(), usedB = new Set(), out = [];
+  for (const c of cands) {
+    if (c.score < LOOK_MIN) break;
+    if (usedA.has(c.i) || usedB.has(c.j)) continue;
+    usedA.add(c.i); usedB.add(c.j); out.push(c);
+  }
+  return out;
+}
+
+// Page order for sets without usable sheet numbers: follow set B's pages; a sheet that only exists in A
+// goes right after the sheet that came before it in A.
+function orderByPages(pairs) {
+  const out = pairs.filter((p) => p.b).sort((x, y) => x.b - y.b);
+  const onlyA = pairs.filter((p) => !p.b).sort((x, y) => x.a - y.a);
+  for (const p of onlyA) {
+    let at = -1, best = 0;
+    out.forEach((q, i) => { if (q.a && q.a < p.a && q.a > best) { best = q.a; at = i; } });
+    out.splice(at + 1, 0, p);
+  }
+  return out;
+}
+
 // Reads both sets and builds (or restores) the sheet pairs. `saved` = a saved/exported sets state, or null.
 async function prepareSets(saved, ctl) {
   setS.match = saved && saved.match === "order" ? "order" : "number";
   setS.tb = saved && ["br", "right", "none"].includes(saved.tb) ? saved.tb : "br";
-  const total = slots.A.doc.numPages + slots.B.doc.numPages;
-  let done = 0;
+  const nA = slots.A.doc.numPages, nB = slots.B.doc.numPages;
   const signal = ctl && ctl.signal;
-  const tick = () => {
-    done++;
-    $("busyText").textContent = `Reading sheet numbers… ${done} of ${total}`;
-    $("busyBar").style.width = (done / total) * 100 + "%";
-  };
+  let done = 0, total = nA + nB;
+  const bar = (text) => { $("busyText").textContent = text; $("busyBar").style.width = Math.min(100, (done / total) * 100) + "%"; };
+  const tick = () => { done++; bar(`Reading sheet numbers… ${done} of ${total}`); };
   setS.idx.A = await readIndexOf(slots.A.doc, tick, signal);
   setS.idx.B = await readIndexOf(slots.B.doc, tick, signal);
   setS.notice = "";
 
-  const nA = slots.A.doc.numPages, nB = slots.B.doc.numPages;
   const usable = saved && Array.isArray(saved.pairs) && saved.pairs.length &&
     saved.pairs.every((p) => p && p.a <= nA && p.b <= nB && (p.a || p.b));
   if (usable) {
     setS.pairs = saved.pairs.map((p) => ({ a: p.a | 0, b: p.b | 0, num: p.num || "", title: p.title || "",
       manual: !!p.manual, chg: typeof p.chg === "number" ? p.chg : null }));
     setS.cur = clamp(parseInt(saved.cur, 10) || 0, 0, setS.pairs.length - 1);
-  } else {
-    const readA = setS.idx.A.filter((e) => e.number).length, readB = setS.idx.B.filter((e) => e.number).length;
-    if (readA < 0.6 * nA || readB < 0.6 * nB) {
-      setS.match = "order";
-      setS.notice = "Couldn't read sheet numbers on most pages (scanned drawings have no readable text), so sheets are matched by page order. Check the pairs, and re-pair any sheet by hand.";
-    }
-    setS.pairs = buildPairs(setS.idx.A, setS.idx.B, setS.match);
-    setS.cur = 0;
+    return;
+  }
+
+  setS.cur = 0;
+  setS.pairs = buildPairs(setS.idx.A, setS.idx.B, "number");
+  const readA = setS.idx.A.filter((e) => e.number).length, readB = setS.idx.B.filter((e) => e.number).length;
+
+  // pages with no readable number: match them by how they look (and the words on them)
+  const blankA = new Set(setS.idx.A.filter((e) => !e.number).map((e) => e.page));
+  const blankB = new Set(setS.idx.B.filter((e) => !e.number).map((e) => e.page));
+  const leftA = setS.pairs.filter((p) => p.a && !p.b && blankA.has(p.a));
+  const leftB = setS.pairs.filter((p) => p.b && !p.a && blankB.has(p.b));
+  let byLook = 0;
+  if (leftA.length && leftB.length) {
+    done = 0; total = leftA.length + leftB.length;
+    const tickL = () => { done++; bar(`Matching sheets by how they look… ${done} of ${total}`); };
+    const hits = await matchByLook(leftA, leftB, tickL, signal);
+    const gone = new Set();
+    hits.forEach((h) => {
+      const pa = leftA[h.i], pb = leftB[h.j];
+      pb.a = pa.a; pb.look = true; pb.num = `Page ${pb.b}`; pb.title = pb.title || pa.title;
+      gone.add(pa);
+    });
+    byLook = hits.length;
+    setS.pairs = setS.pairs.filter((p) => !gone.has(p));
+  }
+  // with unreadable numbers, "Page 10" would sort before "Page 2" by name: list by page position instead
+  if (byLook || readA < 0.9 * nA || readB < 0.9 * nB) setS.pairs = orderByPages(setS.pairs);
+
+  const matched = setS.pairs.filter((p) => p.a && p.b).length;
+  if (matched < 0.4 * Math.min(nA, nB) && (readA < 0.6 * nA || readB < 0.6 * nB)) {
+    // neither numbers nor looks lined the sets up: the last resort is page order
+    setS.match = "order";
+    setS.pairs = orderByPages(buildPairs(setS.idx.A, setS.idx.B, "order"));
+    setS.notice = "Couldn't line these sets up by sheet number or by how the sheets look, so they are matched by page order. Check the pairs, and re-pair any sheet by hand.";
+  } else if (byLook) {
+    setS.notice = `${byLook} sheet${byLook === 1 ? "" : "s"} had no readable sheet number, so ${byLook === 1 ? "it was" : "they were"} matched by how ${byLook === 1 ? "it looks" : "they look"}. Please check ${byLook === 1 ? "that pair" : "those pairs"}.`;
   }
 }
 
@@ -655,7 +822,7 @@ function repair(side, page) {
   applyPairToSlots();
   syncChrome(); renderNotes(); renderSets(); renderPairEditor();
   changed();
-  mountBoth(false).then(() => runAnalysis());
+  mountBoth(false);
 }
 
 /* ---------- change check ---------- */
@@ -713,25 +880,79 @@ async function measureChange(pa, pb) {
   return diff;
 }
 
-async function runAnalysis() {
-  if (!setS.on) return;
-  const my = ++setS.run;
+// Waits until nothing is being turned or drawn, so background work never slows down a page turn.
+async function settle(my) {
+  while (my === bgRun) {
+    if (!mountBusy && performance.now() - lastNav > 350) return true;
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  return false;
+}
+
+// Where a pair of sheets will be drawn (same rule as the main view), so neighbours can be drawn ahead of time.
+async function layoutFor(pa, pb) {
+  const { pageA, pageB } = await pagePair(pa, pb);
+  const vA = pageA.getViewport({ scale: 1 }), vB = pageB.getViewport({ scale: 1 });
+  const pad = 14;
+  const s = Math.min((S.vw - pad * 2) / vB.width, (S.vh - pad * 2) / vB.height);
+  const W0 = Math.max(50, vB.width * s), H0 = Math.max(50, vB.height * s);
+  const sa = Math.min(W0 / vA.width, H0 / vA.height);
+  const wa = vA.width * sa, ha = vA.height * sa;
+  return { pageA, pageB, boxB: { x: 0, y: 0, w: W0, h: H0 }, boxA: { x: (W0 - wa) / 2, y: (H0 - ha) / 2, w: wa, h: ha } };
+}
+
+// Draws the next and previous sheet pairs ahead of time, so turning to them is instant.
+async function prefetchNeighbors(my) {
+  for (const d of [1, -1]) {
+    const p = setS.pairs[setS.cur + d];
+    if (!p) continue;
+    let lay;
+    try { lay = await layoutFor(p.a, p.b); } catch (e) { continue; }
+    for (const [num, page, box, which] of [[p.b, lay.pageB, lay.boxB, "B"], [p.a, lay.pageA, lay.boxA, "A"]]) {
+      if (my !== bgRun) return;
+      if (!num) continue;
+      const r = rasterFor(box);
+      const key = rasterKey(`${slots[which].doc.fp}#${num}`, r);
+      if (baseCache.has(key)) continue;
+      const c = newRaster(r);
+      bgTask = renderFit(page, c);
+      try { await bgTask.promise; }
+      catch (e) { freeCanvas(c); if (my !== bgRun) return; continue; }
+      if (my !== bgRun) { freeCanvas(c); return; }
+      putCache(key, c);
+      await yieldUI();
+    }
+  }
+}
+
+async function analyzePending(my) {
   const todo = setS.pairs.filter((p) => p.a && p.b && p.chg == null);
   setS.total = todo.length; setS.done = 0;
   paintProgress();
   for (const p of todo) {
-    if (my !== setS.run || !cpOn || !setS.on) return;
+    if (my !== bgRun || !cpOn || !setS.on) return;
     try { p.chg = await measureChange(p.a, p.b); }
     catch (e) { p.chg = -1; }
     setS.done++;
     scheduleSetsList();
     paintProgress();
     await yieldUI();
+    if (!(await settle(my))) return;
   }
-  if (my !== setS.run) return;
+  if (my !== bgRun) return;
   setS.total = 0; setS.done = 0;
   paintProgress(); renderSets(); renderPairNav();
   if (todo.length) changed();
+}
+
+// Quiet work after a sheet is on screen: get the neighbours ready first, then check sheets for changes.
+async function background() {
+  if (!setS.on || !cpOn) return;
+  const my = ++bgRun;
+  if (!(await settle(my))) return;
+  try { await prefetchNeighbors(my); } catch (e) { /* not critical */ }
+  if (my !== bgRun) return;
+  await analyzePending(my);
 }
 
 /* ---------- sheets panel ---------- */
@@ -861,14 +1082,14 @@ $("spMatch").addEventListener("change", (e) => {
   applyPairToSlots();
   syncChrome(); renderNotes(); renderSets(); renderPairEditor();
   changed();
-  mountBoth(false).then(() => runAnalysis());
+  mountBoth(false);
 });
 $("spTb").addEventListener("change", (e) => {
   setS.tb = ["br", "right", "none"].includes(e.target.value) ? e.target.value : "br";
   setS.pairs.forEach((p) => { p.chg = null; });
   renderSets(); renderPairNav();
   changed();
-  runAnalysis();
+  background();
 });
 
 function currentSets() {
@@ -896,6 +1117,7 @@ function updateDz(w) {
 }
 
 function resetSlots() {
+  clearCache();
   for (const w of ["A", "B"]) {
     if (slots[w]) { try { slots[w].doc.destroy(); } catch (e) {} }
     slots[w] = null;
@@ -903,35 +1125,19 @@ function resetSlots() {
   }
 }
 
-function setStartMode(m) {
-  if (m === startMode) return;
-  startMode = m;
-  resetSlots();
-  showStartMsg("");
-  const sets = m === "sets";
-  $("startModeSingle").classList.toggle("on", !sets);
-  $("startModeSets").classList.toggle("on", sets);
-  $("dzLabelA").textContent = sets ? "Set A" : "Drawing A";
-  $("dzLabelB").textContent = sets ? "Set B" : "Drawing B";
-  $("dzHintA").textContent = $("dzHintB").textContent = sets ? "One PDF per set, one sheet per page" : "PDF, JPG or PNG";
-  $("fileA").accept = $("fileB").accept = sets ? "application/pdf" : "application/pdf,image/*";
-  $("startSub").textContent = sets
-    ? "Pick the older and the newer drawing set. Sheets are matched by sheet number, and each matched pair can be compared. Nothing is stored on the server unless you tap Save."
-    : "Pick the older and the newer drawing. Nothing is saved to a project, and nothing is stored on the server unless you tap Save.";
-}
-$("startModeSingle").addEventListener("click", () => setStartMode("single"));
-$("startModeSets").addEventListener("click", () => setStartMode("sets"));
+// Two PDFs where either has several sheets are compared as sets (sheets matched up automatically).
+const wantSets = () => !!(slots.A && slots.B && slots.A.doc.isPdf && slots.B.doc.isPdf &&
+  (slots.A.doc.numPages > 1 || slots.B.doc.numPages > 1));
 
-const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+function turnOffSets() {
+  bgRun++; cancel(bgTask);
+  setS.on = false; setS.pairs = []; setS.idx = { A: [], B: [] }; setS.cur = 0; setS.total = 0; setS.done = 0; setS.notice = "";
+  slots.A.page = 1; slots.B.page = 1;
+  renderSets(); renderPairNav();
+}
 
 async function setFile(which, file) {
   if (!file) return;
-  const wantSets = cpOn ? setS.on : startMode === "sets";
-  if (wantSets && !isPdf(file)) {
-    const msg = "Whole sets need PDF files, one sheet per page.";
-    if (cpOn) flash("Couldn't use that file", msg); else showStartMsg(msg, true);
-    return;
-  }
   showStartMsg(`Reading ${file.name}…`, false);
   let doc;
   try { doc = await openFile(file); }
@@ -942,21 +1148,24 @@ async function setFile(which, file) {
   }
   if (slots[which]) { try { slots[which].doc.destroy(); } catch (e) {} }
   slots[which] = { doc, page: 1 };
+  clearCache();
   showStartMsg("");
   updateDz(which);
   if (cpOn) {
     detachCloud();          // the person already confirmed this when they tapped Replace
     selId = null;
     loadState();            // a different pair of files gets its own notes
-    if (setS.on) {
+    if (wantSets()) {
       const ok = await rePrepareSets();
       if (!ok) return;
+      setS.on = true;
+    } else if (setS.on) {
+      turnOffSets();
     }
     syncChrome(); renderNotes();
     await mountBoth(false);
-    if (setS.on) runAnalysis();
   } else if (slots.A && slots.B) {
-    startCompare({ sets: startMode === "sets" });
+    startCompare({ sets: wantSets() });
   }
 }
 
@@ -1043,7 +1252,6 @@ async function startCompare(opts = {}) {
   syncChrome(); renderNotes(); syncSaveUI();
   await nextFrame();
   await mountBoth(false);
-  if (setS.on) runAnalysis();
 }
 
 async function startOver() {
@@ -1056,7 +1264,8 @@ async function startOver() {
   if (!wasCloud) persist();
   cpOn = false;
   mountSeq++;
-  setS.run++;                                  // stops any change check in progress
+  bgRun++; cancel(bgTask);                     // stops any background work in progress
+  clearCache();
   setS.on = false; setS.pairs = []; setS.idx = { A: [], B: [] }; setS.cur = 0; setS.total = 0; setS.done = 0; setS.notice = "";
   renderSets(); renderPairNav();
   $("setsPanel").classList.remove("open");
@@ -1242,7 +1451,6 @@ async function openSaved(id) {
   busyShow("Opening comparison…", "Starting…", ctl);
   try {
     const { item, state } = await cloud.getComparison(id);
-    if (item.kind === "sets") startMode = "sets";           // so progress messages say "Set A / Set B"
     const files = await cloud.downloadFiles(item, { signal: ctl.signal, onProgress: busyProgress });
     $("busyText").textContent = "Loading the drawings…";
     const dA = await openFile(files.A);
