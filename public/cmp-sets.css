@@ -1,0 +1,85 @@
+/* cmp-sets.css — whole-set comparison (compare.html). Load after app.css and cmp-colors.css. */
+
+/* ---- start screen: one drawing each / whole sets ---------------- */
+.cp-modes { display: flex; justify-content: center; margin: 0 0 18px; }
+.cp-modes .seg-btn { min-height: 44px; padding: 0 16px; }
+
+/* ---- saved list badge ------------------------------------------- */
+.sv-kind { display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+  color: var(--color-accent-200); box-shadow: inset 0 0 0 1px var(--color-accent-700); }
+
+/* ---- sheet navigation in the tool row ---------------------------- */
+.pair-ind { min-width: 150px; max-width: 220px; padding: 0 4px; text-align: center; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; font: 13px ui-monospace, Menlo, monospace; color: var(--color-neutral-200); }
+.cp-sets-toggle { display: none; }
+
+/* ---- sheets panel ------------------------------------------------ */
+.sets-panel { width: 290px; flex: none; display: flex; flex-direction: column; gap: 10px; overflow: auto;
+  border-right: 1px solid var(--color-divider); padding: 16px 14px; background: var(--color-bg); }
+.sets-panel .h-label { font: 10px ui-monospace, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--color-neutral-600); padding: 0 4px; }
+.sp-summary { font-size: 12px; color: var(--color-neutral-400); line-height: 1.5; padding: 0 4px; }
+.sp-progress { padding: 0 4px; }
+.sp-prog-text { margin-top: 5px; font-size: 11px; color: var(--color-neutral-500); }
+.sp-filter { display: flex; }
+.sp-filter .seg-btn { flex: 1; justify-content: center; padding: 0 6px; font-size: 12px; min-height: 40px; }
+.sp-notice { padding: 9px 11px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+  background: rgba(217,119,6,.14); box-shadow: inset 0 0 0 1px rgba(251,191,36,.45); color: #fbd38d; }
+.sp-list { display: grid; gap: 4px; }
+.sp-empty { padding: 10px 4px; font-size: 12px; color: var(--color-neutral-500); }
+
+.sp-row { display: grid; grid-template-columns: 12px auto 1fr auto; align-items: center; gap: 9px;
+  min-height: 44px; padding: 6px 10px; border-radius: 9px; cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--color-neutral-800); -webkit-tap-highlight-color: transparent; }
+.sp-row.cur { background: var(--color-accent-900); box-shadow: inset 0 0 0 1px var(--color-accent-700); }
+.sp-num { font: 500 13px ui-monospace, Menlo, monospace; color: var(--color-accent-300); }
+.sp-title { min-width: 0; font-size: 12px; color: var(--color-neutral-400); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-tag { grid-column: 2 / -1; font-size: 11px; color: var(--color-neutral-500); margin-top: -2px; }
+.sp-row .sp-n { min-width: 20px; padding: 1px 6px; border-radius: 999px; text-align: center;
+  font: 600 11px var(--font-body); color: #fff; background: var(--color-accent-600); }
+@media (hover: hover) { .sp-row:not(.cur):hover { box-shadow: inset 0 0 0 1px var(--color-accent-700); } }
+
+/* status dots */
+.st { width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
+.st-changed { background: #d97706; }
+.st-same { background: transparent; box-shadow: inset 0 0 0 2px var(--color-neutral-600); }
+.st-onlyA { background: var(--cmp-a, #e5342a); }
+.st-onlyB { background: #059669; }
+.st-pending, .st-unknown { background: transparent; border: 2px dashed var(--color-neutral-500); }
+
+/* pair editor + options */
+.sp-pair { padding-top: 10px; border-top: 1px solid var(--color-divider); }
+.sp-pair-title { font: 500 13px var(--font-body); color: var(--color-neutral-200); margin-bottom: 2px; }
+.sp-adv { padding-top: 10px; border-top: 1px solid var(--color-divider); }
+.sp-adv summary { min-height: 36px; display: flex; align-items: center; cursor: pointer; font: 500 13px var(--font-body);
+  color: var(--color-neutral-300); }
+.sp-foot { font-size: 11px; line-height: 1.45; color: var(--color-neutral-600); padding: 0 4px; }
+
+@media (pointer: coarse) {
+  .sets-panel .input { font-size: 16px; }
+}
+
+/* narrow screens: the sheets panel becomes a drawer from the left */
+@media (max-width: 1100px) {
+  .cp-sets-toggle:not(.hidden) { display: inline-flex; }
+  .sets-panel { position: absolute; top: 0; left: 0; bottom: 0; z-index: 20; width: min(320px, 92%);
+    transform: translateX(-100%); visibility: hidden;
+    transition: transform .2s ease-out, visibility 0s linear .2s; box-shadow: 14px 0 34px rgba(0,0,0,.5); }
+  .sets-panel.open { transform: translateX(0); visibility: visible; transition: transform .2s ease-out; }
+}
+
+/* ---- print: whole-set report (summary table, then one section per sheet with notes) ---- */
+@media print {
+  .sets-print #printImg { display: none !important; }
+  .sets-print .print-notes { break-before: auto; page-break-before: auto; }
+  .ps-sum { margin-bottom: 4mm; }
+  .ps-sec { break-before: page; page-break-before: always; }
+  .ps-head { margin: 0 0 2mm; font-size: 12pt; }
+  .ps-head b { font-weight: 700; }
+  .ps-head span { color: #555; font-size: 10pt; }
+  .ps-img { display: block; width: auto; height: auto; max-width: 100%; max-height: 118mm; margin: 0 auto 3mm; object-fit: contain; }
+  .ps-sum td, .ps-sum th { font-size: 9pt; }
+}
+@media print and (orientation: portrait) {
+  .ps-img { max-height: 170mm; }
+}
