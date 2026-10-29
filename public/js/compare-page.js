@@ -448,6 +448,7 @@ function syncChrome() {
   $("lblB").textContent = lbl("B");
   $("pageTitle").textContent = setS.on ? "Compare two sets" : "Compare two drawings";
   renderPairNav();
+  syncMatchBtn();
 }
 
 function applyMode() {
@@ -586,7 +587,7 @@ function buildPairs(idxA, idxB, mode) {
     for (let i = 0; i < n; i++) {
       const a = idxA[i], b = idxB[i];
       pairs.push({ a: a ? a.page : 0, b: b ? b.page : 0,
-        num: (b && b.number) || (a && a.number) || `Page ${i + 1}`,
+        num: labelOf(a, b, `Page ${i + 1}`),
         title: (b && b.title) || (a && a.title) || "", manual: false, chg: null });
     }
     return pairs;
@@ -614,10 +615,16 @@ function buildPairs(idxA, idxB, mode) {
   return pairs;
 }
 
+// How a pair is named: the shared sheet number, or both numbers ("E-101 ↔ E-102") when the two sheets
+// carry different numbers (a pair made by hand, or sets matched by page order).
+function labelOf(ea, eb, fallback) {
+  const na = ea && ea.number, nb = eb && eb.number;
+  if (na && nb && keyOf(na) !== keyOf(nb)) return `${na} ↔ ${nb}`;
+  return nb || na || fallback;
+}
 function numberFor(p) {
-  const nb = p.b && setS.idx.B[p.b - 1] && setS.idx.B[p.b - 1].number;
-  const na = p.a && setS.idx.A[p.a - 1] && setS.idx.A[p.a - 1].number;
-  return nb || na || (p.b ? `B p.${p.b}` : `A p.${p.a}`);
+  const ea = p.a ? setS.idx.A[p.a - 1] : null, eb = p.b ? setS.idx.B[p.b - 1] : null;
+  return labelOf(ea, eb, p.b ? `B p.${p.b}` : `A p.${p.a}`);
 }
 function titleFor(p) {
   const tb = p.b && setS.idx.B[p.b - 1] && setS.idx.B[p.b - 1].title;
@@ -814,7 +821,9 @@ function repair(side, page) {
   const other = side === "a" ? "b" : "a";
   if (!page && !p[other]) { renderPairEditor(); return; }          // a sheet needs at least one side
   if (p[side] === page) return;
-  if (page) setS.pairs.forEach((q) => { if (q !== p && q[side] === page) { q[side] = 0; q.chg = null; q.manual = true; } });
+  if (page) setS.pairs.forEach((q) => {
+    if (q !== p && q[side] === page) { q[side] = 0; q.chg = null; q.manual = true; q.num = numberFor(q); q.title = titleFor(q); }
+  });
   p[side] = page; p.manual = true; p.chg = null;
   p.num = numberFor(p); p.title = titleFor(p);
   setS.pairs = setS.pairs.filter((q) => q === p || q.a || q.b);
@@ -1186,6 +1195,70 @@ async function rePrepareSets() {
   }
 }
 
+// ---- "Match sheets" for a comparison that is already open and not matched up (older saved comparisons) ----
+function syncMatchBtn() {
+  $("matchBtn").classList.toggle("hidden", !(cpOn && !setS.on && wantSets()));
+}
+
+// Pages are matched up by sheet number (or by how they look). Notes stay on the pages they were made on:
+// any pair of pages that a note was made on is kept as a pair, even if the automatic match would pair them differently.
+function keepNotePairs() {
+  const combos = new Map();
+  notes.forEach((n) => { if (n.pa && n.pb) combos.set(n.pa + ":" + n.pb, [n.pa, n.pb]); });
+  let forced = 0;
+  for (const [a, b] of combos.values()) {
+    if (setS.pairs.some((p) => p.a === a && p.b === b)) continue;
+    setS.pairs.forEach((p) => { if (p.a === a) { p.a = 0; p.chg = null; } if (p.b === b) { p.b = 0; p.chg = null; } });
+    setS.pairs = setS.pairs.filter((p) => p.a || p.b);
+    const np = { a, b, num: "", title: "", manual: true, chg: null };
+    np.num = numberFor(np); np.title = titleFor(np);
+    setS.pairs.push(np);
+    forced++;
+  }
+  if (forced) {
+    const readable = setS.pairs.every((p) => {
+      const e = (p.b && setS.idx.B[p.b - 1]) || (p.a && setS.idx.A[p.a - 1]);
+      return e && e.number;
+    });
+    if (readable) setS.pairs.sort((x, y) => natural(x.num, y.num) || (x.b - y.b) || (x.a - y.a));
+    else setS.pairs = orderByPages(setS.pairs);
+  }
+  return forced;
+}
+
+async function matchExisting() {
+  if (!cpOn || setS.on || !wantSets()) return;
+  const curA = slots.A.page, curB = slots.B.page;
+  const ctl = new AbortController();
+  busyShow("Matching sheets…", "Starting…", ctl);
+  try {
+    await prepareSets(null, ctl);
+    busyHide();
+  } catch (e) {
+    busyHide();
+    setS.pairs = []; setS.idx = { A: [], B: [] }; setS.cur = 0;
+    if (e.message !== "Cancelled.") flash("Couldn't match the sheets", e.message);
+    return;
+  }
+  setS.on = true;
+  const forced = keepNotePairs();
+  let i = setS.pairs.findIndex((p) => p.a === curA && p.b === curB);   // stay on the sheets being looked at, if they pair up
+  if (i < 0) i = setS.pairs.findIndex((p) => p.b === curB);
+  setS.cur = Math.max(0, i);
+  setS.filter = "all";
+  $("spFilter").querySelectorAll("[data-filter]").forEach((x) => x.classList.toggle("on", x.dataset.filter === "all"));
+  applyPairToSlots();
+  selId = null;
+  renderSets(); renderPairEditor();
+  syncChrome(); renderNotes();
+  changed();                                         // a saved comparison keeps its new pairing
+  const n = setS.pairs.filter((p) => p.a && p.b).length;
+  toast(`Matched ${n} sheet${n === 1 ? "" : "s"}`,
+    (forced ? `${forced} pair${forced === 1 ? "" : "s"} kept where you already had notes. ` : "") + "Use the arrows to step through them together.", false, 5000);
+  await mountBoth(false);
+}
+$("matchBtn").addEventListener("click", matchExisting);
+
 ["A", "B"].forEach((w) => {
   const dz = $("dz" + w);
   ["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
@@ -1225,8 +1298,8 @@ async function swapAB() {
 $("swapBtn").addEventListener("click", swapAB);
 
 async function startCompare(opts = {}) {
-  const wantSets = !!(opts.sets || (opts.state && opts.state.sets && opts.state.sets.on));
-  if (wantSets) {
+  const asSets = !!(opts.sets || (opts.state && opts.state.sets && opts.state.sets.on));
+  if (asSets) {
     const ctl = new AbortController();
     busyShow("Reading sheets…", "Starting…", ctl);
     try {
@@ -1241,7 +1314,7 @@ async function startCompare(opts = {}) {
       return;
     }
   }
-  setS.on = wantSets;
+  setS.on = asSets;
   cpOn = true;
   $("startScreen").classList.add("hidden");
   $("cpApp").classList.remove("hidden");
@@ -1252,6 +1325,7 @@ async function startCompare(opts = {}) {
   syncChrome(); renderNotes(); syncSaveUI();
   await nextFrame();
   await mountBoth(false);
+  if (!setS.on && wantSets()) toast("These files have several sheets", "Tap Match sheets to line them up and compare them in pairs.", false, 6000);
 }
 
 async function startOver() {
