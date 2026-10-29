@@ -24,6 +24,22 @@ import * as colors from "./cmp-colors.js";
  *    }
  * ------------------------------------------------------------------ */
 
+// If anything goes wrong while the page starts up, say so on screen instead of leaving "Loading…" there forever.
+let listStarted = false;
+function showStartupProblem(text) {
+  const el = document.getElementById("savedMsg");
+  if (!el || listStarted) return;
+  el.classList.remove("hidden");
+  el.style.color = "#ff8a80";
+  el.textContent = text;
+}
+window.addEventListener("error", (e) => {
+  showStartupProblem(`Something went wrong starting this page (${e.message || "unknown error"}). Reload the page. If it keeps happening, check that compare.html and compare-page.js on the site are both the latest versions.`);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  showStartupProblem(`Something went wrong starting this page (${(e.reason && e.reason.message) || "unknown error"}). Reload the page and try again.`);
+});
+
 const pdfjsLib = window.pdfjsLib;
 if (pdfjsLib) {
   pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -43,6 +59,19 @@ const fmtWhen = (ms) => {
   const d = new Date(ms);
   return isNaN(d) ? "" : d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 };
+
+// compare.html and this script are updated together. If the page on the site is older than the script,
+// say exactly that instead of failing silently.
+const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pins", "preparedBy", "printArea", "printBtn", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "setsPanel", "setsToggle", "setsToggleLabel", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
+const missingIds = REQUIRED_IDS.filter((id) => !document.getElementById(id));
+if (missingIds.length) {
+  const bar = document.createElement("div");
+  bar.setAttribute("role", "alert");
+  bar.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:200;padding:12px 16px;background:#7a1f1f;color:#fff;font:14px sans-serif;line-height:1.4";
+  bar.textContent = `This page is out of step with its script (missing: ${missingIds.slice(0, 6).join(", ")}${missingIds.length > 6 ? "…" : ""}). Upload the latest compare.html and compare-page.js together, then reload.`;
+  document.body.appendChild(bar);
+  throw new Error("compare.html is older than compare-page.js (missing " + missingIds.join(", ") + ")");
+}
 
 const viewport = $("viewport");
 const stage = $("stage");
@@ -1197,7 +1226,8 @@ async function rePrepareSets() {
 
 // ---- "Match sheets" for a comparison that is already open and not matched up (older saved comparisons) ----
 function syncMatchBtn() {
-  $("matchBtn").classList.toggle("hidden", !(cpOn && !setS.on && wantSets()));
+  const b = $("matchBtn");
+  if (b) b.classList.toggle("hidden", !(cpOn && !setS.on && wantSets()));
 }
 
 // Pages are matched up by sheet number (or by how they look). Notes stay on the pages they were made on:
@@ -1257,7 +1287,7 @@ async function matchExisting() {
     (forced ? `${forced} pair${forced === 1 ? "" : "s"} kept where you already had notes. ` : "") + "Use the arrows to step through them together.", false, 5000);
   await mountBoth(false);
 }
-$("matchBtn").addEventListener("click", matchExisting);
+if ($("matchBtn")) $("matchBtn").addEventListener("click", matchExisting);
 
 ["A", "B"].forEach((w) => {
   const dz = $("dz" + w);
@@ -1487,20 +1517,33 @@ function paintSaved(d) {
   renderSavedList($("savedList"), d.items);
 }
 
+const withTimeout = (promise, ms) => Promise.race([
+  promise,
+  new Promise((_, rej) => setTimeout(() => rej(new Error("It is taking too long to reach your account. Check your connection.")), ms)),
+]);
+
 async function refreshSaved() {
+  listStarted = true;
   const msg = $("savedMsg");
+  msg.style.color = "";
   try {
-    const d = await loadSaved();
+    const d = await withTimeout(loadSaved(), 25000);
     paintSaved(d);
     return d;
   } catch (e) {
     $("savedMeta").textContent = "";
     msg.classList.remove("hidden");
-    msg.textContent = "Couldn't load your saved comparisons. " + e.message;
+    msg.style.color = "";
+    msg.innerHTML = `${esc("Couldn't load your saved comparisons. " + e.message)} <button type="button" class="btn btn-secondary" data-retry style="min-height:36px;margin-left:8px">Try again</button>`;
     $("savedList").innerHTML = "";
     return null;
   }
 }
+$("savedSection").addEventListener("click", (e) => {
+  if (!e.target.closest("[data-retry]")) return;
+  $("savedMsg").textContent = "Loading your saved comparisons…";
+  refreshSaved();
+});
 
 function wireList(container) {
   container.addEventListener("click", (e) => {
@@ -2402,6 +2445,9 @@ $("exWord").addEventListener("click", () => runExport("word"));
 $("exExcel").addEventListener("click", () => runExport("excel"));
 
 /* ------------------------------------------------------------------ */
+setTimeout(() => {
+  if (!listStarted) showStartupProblem("Still waiting for sign-in… If this doesn't change, reload the page or sign in again.");
+}, 12000);
 requireLogin(() => {
   if (!pdfjsLib) showStartMsg("The PDF viewer library didn't load. Images will still work; reload to retry PDFs.", true);
   refreshSaved();
