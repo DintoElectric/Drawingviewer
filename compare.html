@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Compare Drawings — Drawings Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./app.css">
+<link rel="stylesheet" href="./cmp-colors.css">
+<link rel="stylesheet" href="./cmp-sets.css">
+<script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
+<!-- pdf.js (classic build exposes the global pdfjsLib) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+  <div class="viewer-header">
+    <a class="btn btn-icon btn-secondary" id="back" href="./index.html" title="Back"><i class="ph ph-arrow-left" style="font-size:16px"></i></a>
+    <span class="snum">COMPARE</span>
+    <span id="pageTitle" style="font:500 15px var(--font-heading)">Compare two drawings</span>
+    <div class="spacer"></div>
+    <button class="btn btn-secondary hidden" id="newBtn" style="min-height:36px"><i class="ph ph-arrow-counter-clockwise"></i>Close comparison</button>
+  </div>
+
+  <!-- STEP 1: choose two drawings (or two sets), or reopen a saved comparison -->
+  <div class="cp-start" id="startScreen">
+    <div class="cp-start-inner">
+      <div class="cp-start-head">
+        <div class="cp-start-title">Compare drawings or drawing sets</div>
+        <div class="cp-start-sub" id="startSub">Pick the older and the newer drawing, or two drawing sets (one PDF each). If a file has several sheets, they are matched up for you as it loads. Nothing is stored on the server unless you tap Save.</div>
+      </div>
+
+      <div class="cp-drops">
+        <label class="cp-drop" id="dzA" for="fileA">
+          <i class="ph ph-file-arrow-up"></i>
+          <div class="cp-drop-label"><span id="dzLabelA">Older</span> <span>drawing or set, before</span></div>
+          <div class="cp-drop-file" id="dzNameA">Tap to choose, or drop a file here</div>
+          <div class="cp-drop-hint" id="dzHintA">PDF, JPG or PNG</div>
+        </label>
+        <label class="cp-drop" id="dzB" for="fileB">
+          <i class="ph ph-file-arrow-up"></i>
+          <div class="cp-drop-label"><span id="dzLabelB">Newer</span> <span>drawing or set, after</span></div>
+          <div class="cp-drop-file" id="dzNameB">Tap to choose, or drop a file here</div>
+          <div class="cp-drop-hint" id="dzHintB">PDF, JPG or PNG</div>
+        </label>
+      </div>
+      <div class="cp-start-msg hidden" id="startMsg"></div>
+
+      <!-- reopen an exported .dhcompare file -->
+      <div class="cp-import">
+        <label class="btn btn-secondary" for="fileImport" style="min-height:44px"><i class="ph ph-folder-open"></i>Open saved file</label>
+        <span class="cp-import-hint">A <b>.dhcompare</b> file you exported earlier. On iPad, look in Files &rarr; Downloads.</span>
+      </div>
+
+      <!-- comparisons saved to this login -->
+      <section class="cp-saved" id="savedSection">
+        <div class="cp-saved-head">
+          <div class="cp-saved-title">My comparisons</div>
+          <div class="cp-saved-meta" id="savedMeta"></div>
+        </div>
+        <div class="cp-saved-msg" id="savedMsg">Loading your saved comparisons…</div>
+        <div class="cp-saved-list" id="savedList"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- file pickers (shared by the start screen and the "Replace" buttons) -->
+  <input type="file" id="fileA" class="hidden" accept="application/pdf,image/*">
+  <input type="file" id="fileB" class="hidden" accept="application/pdf,image/*">
+  <!-- no accept filter on purpose: iPad doesn't recognise the .dhcompare type and would grey the file out -->
+  <input type="file" id="fileImport" class="hidden">
+
+  <!-- STEP 2: compare + notes (hidden until both files are loaded) -->
+  <div class="cp-app hidden" id="cpApp">
+
+    <!-- which two files are loaded -->
+    <div class="cp-filebar" id="fileBar">
+      <div class="cp-chip" id="chipA">
+        <span class="cp-chip-tag cp-tag-a">A</span>
+        <span class="cp-chip-name" id="nameA">—</span>
+        <span class="cp-chip-pages hidden" id="pagesA">
+          <button class="tbtn tbtn-sm" id="pagePrevA" aria-label="Previous page of A"><i class="ph ph-caret-left"></i></button>
+          <span class="page-ind" id="pageIndA">1 / 1</span>
+          <button class="tbtn tbtn-sm" id="pageNextA" aria-label="Next page of A"><i class="ph ph-caret-right"></i></button>
+        </span>
+        <button class="tbtn tbtn-sm tbtn-text" id="replaceA">Replace</button>
+      </div>
+      <button class="tbtn" id="swapBtn" title="Swap A and B" aria-label="Swap A and B"><i class="ph ph-arrows-left-right"></i></button>
+      <div class="cp-chip" id="chipB">
+        <span class="cp-chip-tag cp-tag-b">B</span>
+        <span class="cp-chip-name" id="nameB">—</span>
+        <span class="cp-chip-pages hidden" id="pagesB">
+          <button class="tbtn tbtn-sm" id="pagePrevB" aria-label="Previous page of B"><i class="ph ph-caret-left"></i></button>
+          <span class="page-ind" id="pageIndB">1 / 1</span>
+          <button class="tbtn tbtn-sm" id="pageNextB" aria-label="Next page of B"><i class="ph ph-caret-right"></i></button>
+        </span>
+        <button class="tbtn tbtn-sm tbtn-text" id="replaceB">Replace</button>
+      </div>
+      <!-- shown when both files have several sheets that are not matched up yet (e.g. an older saved comparison) -->
+      <button class="tbtn tbtn-text hidden" id="matchBtn" title="Line up the sheets of the two files and compare them in pairs"><i class="ph ph-link"></i><span>Match sheets</span></button>
+    </div>
+
+    <!-- tools: sheet navigation, zoom, compare mode, notes, save, print / export -->
+    <div class="vtools" id="vtools">
+      <!-- whole sets only: step through the matched sheets -->
+      <div class="tgroup hidden" id="pairGroup">
+        <button class="tbtn" id="pairPrev" aria-label="Previous sheet" title="Previous sheet ( [ )"><i class="ph ph-caret-left"></i></button>
+        <span class="pair-ind" id="pairInd">—</span>
+        <button class="tbtn" id="pairNext" aria-label="Next sheet" title="Next sheet ( ] )"><i class="ph ph-caret-right"></i></button>
+        <button class="tbtn tbtn-text" id="nextChanged" title="Jump to the next changed sheet"><i class="ph ph-skip-forward"></i><span>Next change</span></button>
+      </div>
+      <button class="tbtn tbtn-text cp-sets-toggle hidden" id="setsToggle"><i class="ph ph-squares-four"></i><span id="setsToggleLabel">Sheets</span></button>
+
+      <div class="vrule hidden" id="pairRule"></div>
+
+      <div class="tgroup">
+        <button class="tbtn" id="zoomOut" aria-label="Zoom out"><i class="ph ph-magnifying-glass-minus"></i></button>
+        <button class="tbtn tbtn-text zoom-level" id="zoomLevel" title="Fit to screen">100%</button>
+        <button class="tbtn" id="zoomIn" aria-label="Zoom in"><i class="ph ph-magnifying-glass-plus"></i></button>
+        <button class="tbtn tbtn-text" id="fitBtn"><i class="ph ph-corners-out"></i><span>Fit</span></button>
+      </div>
+
+      <div class="vrule"></div>
+
+      <div class="tgroup">
+        <div class="seg" role="group" aria-label="Compare mode">
+          <button class="seg-btn on" id="modeSlider"><i class="ph ph-columns"></i><span>Slider</span></button>
+          <button class="seg-btn" id="modeOverlay"><i class="ph ph-stack"></i><span>Overlay</span></button>
+        </div>
+        <label class="opacity hidden" id="opacityWrap"><span>Drawing A</span><input type="range" id="opacity" min="0" max="100" value="100"></label>
+        <button class="tbtn tbtn-text hidden" id="colorBtn" title="Change the overlay colors"><i class="ph ph-palette"></i><span>Colors</span></button>
+      </div>
+
+      <div class="vrule"></div>
+
+      <button class="tbtn tbtn-text" id="noteBtn" aria-pressed="false"><i class="ph ph-map-pin-plus"></i><span>Add note</span></button>
+      <button class="tbtn tbtn-text cp-notes-toggle" id="notesToggle"><i class="ph ph-list-bullets"></i><span id="notesToggleLabel">Notes (0)</span></button>
+
+      <div class="vrule"></div>
+
+      <!-- save to this login; shows "Saved" / "Saving…" once a comparison has been saved -->
+      <div class="tgroup cp-save">
+        <button class="tbtn tbtn-text" id="saveBtn"><i class="ph ph-floppy-disk"></i><span id="saveBtnLabel">Save</span></button>
+        <span class="save-status" id="saveStatus" aria-live="polite"></span>
+      </div>
+
+      <div class="spacer"></div>
+
+      <div class="cp-menu-wrap">
+        <button class="tbtn tbtn-text" id="exportBtn" aria-haspopup="true" aria-expanded="false"><i class="ph ph-export"></i><span>Export</span><i class="ph ph-caret-down" style="font-size:12px"></i></button>
+        <div class="cp-menu hidden" id="exportMenu" role="menu">
+          <button class="cp-menu-item" id="exWord" role="menuitem"><i class="ph ph-file-doc"></i>Word document (.docx)</button>
+          <button class="cp-menu-item" id="exExcel" role="menuitem"><i class="ph ph-file-xls"></i>Excel spreadsheet (.xlsx)</button>
+          <div class="cp-menu-sep"></div>
+          <button class="cp-menu-item" id="exFile" role="menuitem"><i class="ph ph-package"></i><span>Saved comparison file<small>Both drawings + notes, to reopen later</small></span></button>
+        </div>
+      </div>
+      <button class="tbtn tbtn-text" id="printBtn"><i class="ph ph-printer"></i><span>Print</span></button>
+    </div>
+
+    <div class="vshell">
+      <!-- whole sets only: every matched sheet, with its change status -->
+      <aside class="sets-panel hidden" id="setsPanel">
+        <div class="h-label">Sheets</div>
+        <div class="sp-summary" id="spSummary"></div>
+        <div class="sp-progress hidden" id="spProgress">
+          <div class="cp-bar"><div class="cp-bar-fill" id="spBar"></div></div>
+          <div class="sp-prog-text" id="spProgText"></div>
+        </div>
+        <div class="seg sp-filter" id="spFilter" role="group" aria-label="Filter sheets">
+          <button class="seg-btn on" data-filter="all">All</button>
+          <button class="seg-btn" data-filter="review">To review</button>
+          <button class="seg-btn" data-filter="notes">With notes</button>
+        </div>
+        <div class="sp-notice hidden" id="spNotice"></div>
+        <div class="sp-list" id="spList"></div>
+
+        <div class="sp-pair" id="spPair">
+          <div class="sp-pair-title">Pair this sheet with</div>
+          <label class="field-lbl" for="spPairA">Set A page</label>
+          <select class="input" id="spPairA"></select>
+          <label class="field-lbl" for="spPairB">Set B page</label>
+          <select class="input" id="spPairB"></select>
+        </div>
+
+        <details class="sp-adv">
+          <summary>Matching options</summary>
+          <label class="field-lbl" for="spMatch">Match sheets by</label>
+          <select class="input" id="spMatch">
+            <option value="number">Sheet number</option>
+            <option value="order">Page order</option>
+          </select>
+          <label class="field-lbl" for="spTb">Title block (left out when checking for changes)</label>
+          <select class="input" id="spTb">
+            <option value="br">Bottom-right corner</option>
+            <option value="right">Right-hand strip</option>
+            <option value="none">Don't leave anything out</option>
+          </select>
+        </details>
+        <div class="sp-foot">Change flags compare a reduced picture of each sheet. They are a guide, not proof, so open any sheet that matters.</div>
+      </aside>
+
+      <div class="canvas" id="viewport">
+        <div class="stage" id="stage">
+          <canvas id="cvB"></canvas>
+          <canvas id="cvA" class="hidden"></canvas>
+          <div class="divider" id="divider"><div class="handle"><i class="ph ph-arrows-left-right"></i></div></div>
+          <div class="pins" id="pins"></div>
+        </div>
+
+        <!-- fixed labels (don't move with zoom/pan) -->
+        <div class="cmp-chip chip-a" id="lblA">A</div>
+        <div class="cmp-chip chip-b" id="lblB">B</div>
+        <div class="legend hidden" id="legend">
+          <span><button type="button" class="sw-btn" data-color="a" aria-label="Change the color for Drawing A" title="Tap to change colors"><i class="sw sw-a"></i></button><b>A</b> only (removed)</span>
+          <span><button type="button" class="sw-btn" data-color="b" aria-label="Change the color for Drawing B" title="Tap to change colors"><i class="sw sw-b"></i></button><b>B</b> only (added)</span>
+          <span><i class="sw sw-k"></i>Unchanged</span>
+        </div>
+        <div class="cp-banner hidden" id="noteBanner"><i class="ph ph-map-pin-plus"></i>Tap the drawing to drop a numbered note</div>
+
+        <div class="empty hidden" id="empty"></div>
+      </div>
+
+      <!-- notes panel -->
+      <aside class="notes-panel" id="notesPanel">
+        <div class="h-label">Notes</div>
+        <div class="np-meta">
+          <label class="field-lbl" for="docTitle">Title</label>
+          <input class="input" id="docTitle" type="text" placeholder="e.g. E-101 floor plan changes" autocomplete="off">
+          <label class="field-lbl" for="preparedBy">Prepared by</label>
+          <input class="input" id="preparedBy" type="text" placeholder="Name" autocomplete="off">
+        </div>
+        <div class="np-list" id="noteList"></div>
+        <div class="np-empty" id="noteEmpty">No notes yet. Turn on <b>Add note</b>, then tap the drawing where you spot a change.</div>
+        <button class="btn btn-secondary np-clear hidden" id="clearNotes" style="min-height:36px"><i class="ph ph-trash"></i>Clear all notes</button>
+      </aside>
+    </div>
+  </div>
+
+  <!-- note editor -->
+  <div class="backdrop hidden" id="noteDlg">
+    <div class="modal cp-dlg" role="dialog" aria-modal="true" aria-labelledby="noteDlgTitle">
+      <div class="m-head">
+        <div>
+          <div class="m-title" id="noteDlgTitle">Note</div>
+          <div class="m-sub" id="noteDlgSub"></div>
+        </div>
+      </div>
+      <div class="m-body cp-dlg-body">
+        <label class="field-lbl" for="noteCat">Type</label>
+        <select class="input" id="noteCat">
+          <option value="Changed">Changed</option>
+          <option value="Added">Added</option>
+          <option value="Removed">Removed</option>
+          <option value="Question">Question</option>
+          <option value="Other">Other</option>
+        </select>
+        <label class="field-lbl" for="noteText">Note</label>
+        <textarea class="input" id="noteText" rows="4" placeholder="What changed, and what does the field need to know?"></textarea>
+      </div>
+      <div class="m-actions">
+        <button class="btn btn-secondary hidden" id="noteDelete" style="min-height:40px"><i class="ph ph-trash"></i>Delete</button>
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="noteCancel" style="min-height:40px">Cancel</button>
+        <button class="btn btn-primary" id="noteSave" style="min-height:40px">Save note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- rename a saved comparison -->
+  <div class="backdrop hidden" id="renameDlg">
+    <div class="modal cp-dlg" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
+      <div class="m-head"><div><div class="m-title" id="renameTitle">Rename comparison</div></div></div>
+      <div class="m-body cp-dlg-body">
+        <label class="field-lbl" for="renameInput">Name</label>
+        <input class="input" id="renameInput" type="text" maxlength="140" autocomplete="off">
+      </div>
+      <div class="m-actions">
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="renameCancel" style="min-height:40px">Cancel</button>
+        <button class="btn btn-primary" id="renameSave" style="min-height:40px">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- all saved slots used: choose one to export / delete, then save -->
+  <div class="backdrop hidden" id="fullDlg">
+    <div class="modal cp-dlg cp-dlg-wide" role="dialog" aria-modal="true" aria-labelledby="fullTitle">
+      <div class="m-head">
+        <div>
+          <div class="m-title" id="fullTitle">Your saved comparisons are full</div>
+          <div class="m-sub" id="fullSub"></div>
+        </div>
+      </div>
+      <div class="m-body cp-dlg-body">
+        <div class="cp-saved-list" id="fullList"></div>
+      </div>
+      <div class="m-actions">
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="fullCancel" style="min-height:40px">Cancel</button>
+        <button class="btn btn-primary hidden" id="fullRetry" style="min-height:40px"><i class="ph ph-floppy-disk"></i>Save now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- progress for saving / opening / reading sheets / exporting big files -->
+  <div class="backdrop hidden" id="busy">
+    <div class="modal cp-dlg cp-busy" role="alertdialog" aria-modal="true" aria-labelledby="busyTitle">
+      <div class="m-body cp-dlg-body" style="padding-top:20px">
+        <div class="m-title" id="busyTitle">Working…</div>
+        <div class="m-sub" id="busyText" style="margin-bottom:14px"></div>
+        <div class="cp-bar"><div class="cp-bar-fill" id="busyBar"></div></div>
+      </div>
+      <div class="m-actions">
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="busyCancel" style="min-height:40px">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- print-only area (filled by compare-page.js just before window.print()) -->
+  <div class="print-only" id="printArea">
+    <div class="print-head" id="printHead"></div>
+    <img id="printImg" alt="">
+    <div class="print-notes" id="printNotes"></div>
+  </div>
+
+  <script type="module" src="./js/compare-page.js"></script>
+</body>
+</html>
