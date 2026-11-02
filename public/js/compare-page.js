@@ -62,7 +62,7 @@ const fmtWhen = (ms) => {
 
 // compare.html and this script are updated together. If the page on the site is older than the script,
 // say exactly that instead of failing silently.
-const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "hlBanner", "hlBtn", "hlClear", "hlColors", "hlDelete", "hlGroup", "hlLayer", "hlShapes", "hlUndo", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pdAll", "pdCancel", "pdChanged", "pdGo", "pdMarked", "pdMarks", "pdNotes", "pdScopeWrap", "pdThis", "pins", "preparedBy", "printArea", "printBtn", "printDlg", "printDlgSub", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "savedSection", "setsPanel", "setsToggle", "setsToggleLabel", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
+const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "hlBanner", "hlBtn", "hlClear", "hlColors", "hlDelete", "hlGroup", "hlLayer", "hlShapes", "hlUndo", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pdAll", "pdCancel", "pdChanged", "pdGo", "pdHighNote", "pdMarked", "pdMarks", "pdNotes", "pdScopeWrap", "pdThis", "pins", "preparedBy", "printArea", "printBtn", "printDlg", "printDlgSub", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "savedSection", "setsPanel", "setsToggle", "setsToggleLabel", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
 const missingIds = REQUIRED_IDS.filter((id) => !document.getElementById(id));
 if (missingIds.length) {
   const bar = document.createElement("div");
@@ -91,7 +91,9 @@ const MIN_Z = 0.4, MAX_Z = 12;
 const BASE_MAX_PX = 4e6;               // sheet bitmap cap: keeps sheets quick to draw and turn (zooming re-renders sharply)
 const DETAIL_MAX_PX = 9e6;
 const PRINT_MAXPX = 8e6;
-const SET_PRINT_MAXPX = 4e6;             // per-sheet overview when printing a whole set
+const SET_PRINT_MAXPX = 5e6;             // per-sheet picture when printing many sheets (Standard quality)
+const PRINT_HIGH_PX = 14e6;              // per-sheet picture at High quality (kept under the 16.7 million pixel limit of iPad Safari canvases)
+const PRINT_HIGH_MAX_SHEETS = 4;         // High quality is offered for this many sheets or fewer at once
 const CROP_W = 300, CROP_RATIO = 0.75, CROP_K = 2.4;   // crop region in stage units (stage width = 1000)
 const ZCOLS = 8, ZROWS = 6;
 
@@ -2322,6 +2324,37 @@ function drawPins(ctx, W, H, pa, pb) {
   ctx.restore();
 }
 
+const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+
+// Overlay of two sheets drawn on white (b = newer, a = older; RGBA data, b is rewritten):
+//   line work in both sheets  -> clean black, at full sharpness
+//   only in the older sheet   -> the older sheet's color
+//   only in the newer sheet   -> the newer sheet's color
+// Partly covered (anti-aliased) edge pixels keep their softness instead of being tinted a muddy in-between color.
+function composeOverlay(b, a, colA, colB, opacity) {
+  for (let i = 0; i < b.length; i += 4) {
+    const inkB = 255 - Math.min(b[i], b[i + 1], b[i + 2]);
+    const inkA = (255 - Math.min(a[i], a[i + 1], a[i + 2])) * opacity;
+    if (inkA <= 0 && inkB <= 0) { b[i] = b[i + 1] = b[i + 2] = 255; b[i + 3] = 255; continue; }
+    const both = inkA < inkB ? inkA : inkB;
+    const only = Math.abs(inkA - inkB) / 255;                 // how much of this pixel belongs to just one sheet
+    const col = inkA > inkB ? colA : colB;
+    const base = 255 - both;
+    b[i] = base * (1 - only) + col[0] * only;
+    b[i + 1] = base * (1 - only) + col[1] * only;
+    b[i + 2] = base * (1 - only) + col[2] * only;
+    b[i + 3] = 255;
+  }
+}
+
+// Like renderFit, but draws only the band of the finished W x H picture that starts at row y0 (the canvas is the band).
+function renderFitBand(page, canvas, W, H, y0) {
+  const v1 = page.getViewport({ scale: 1 });
+  const s = Math.min(W / v1.width, H / v1.height);
+  const vp = page.getViewport({ scale: s, offsetX: (W - v1.width * s) / 2, offsetY: (H - v1.height * s) / 2 - y0 });
+  return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp });
+}
+
 // Highlights for one pair of pages, drawn onto a finished image (same look as on screen).
 function drawMarks(ctx, W, H, pa, pb) {
   const lw = Math.max(2, W / 400), mw = Math.max(8, W / 70);
@@ -2360,32 +2393,38 @@ async function buildOverview(maxPx, pa = slots.A.page, pb = slots.B.page, o = {}
   out.width = W; out.height = H;
   const ctx = out.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-  await renderFit(pageB, out).promise;
 
-  const tmp = document.createElement("canvas");
-  tmp.width = W; tmp.height = H;
-  const tctx = tmp.getContext("2d");
-  tctx.fillStyle = "#fff"; tctx.fillRect(0, 0, W, H);        // a missing sheet is plain white (it must not be transparent: tinting would fill it)
-  await renderFit(pageA, tmp).promise;
-  if (mode === "overlay") {
-    const col = colors.get();
-    tintCanvas(out, col.b);            // Drawing B (newer) in its color
-    tintCanvas(tmp, col.a);            // Drawing A (older) in its color
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = view.opacity;
-    ctx.drawImage(tmp, 0, 0);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
-  } else {
-    ctx.save();
-    ctx.beginPath(); ctx.rect(0, 0, W * view.p, H); ctx.clip();
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-    ctx.drawImage(tmp, 0, 0);
-    ctx.restore();
-    const lw = Math.max(3, W / 900);
-    ctx.fillStyle = "#7c6ff0";
-    ctx.fillRect(W * view.p - lw / 2, 0, lw, H);
+  // Built a strip at a time: the two sheets are drawn, combined, and added to the picture, so memory use
+  // stays modest even for very large, sharp pictures.
+  const bandH = Math.max(64, Math.min(H, o.bandH || 1200));
+  const bandB = document.createElement("canvas"), bandA = document.createElement("canvas");
+  const col = colors.get();
+  const rgbA = hexRgb(col.a), rgbB = hexRgb(col.b);
+  for (let y0 = 0; y0 < H; y0 += bandH) {
+    const h = Math.min(bandH, H - y0);
+    bandB.width = W; bandB.height = h; bandA.width = W; bandA.height = h;          // resizing a canvas clears it
+    const bx = bandB.getContext("2d"), ax = bandA.getContext("2d");
+    bx.fillStyle = "#fff"; bx.fillRect(0, 0, W, h);
+    ax.fillStyle = "#fff"; ax.fillRect(0, 0, W, h);                                // a missing sheet is plain white (transparent would be filled by the tint)
+    await renderFitBand(pageB, bandB, W, H, y0).promise;
+    await renderFitBand(pageA, bandA, W, H, y0).promise;
+    if (mode === "overlay") {
+      const img = bx.getImageData(0, 0, W, h);
+      composeOverlay(img.data, ax.getImageData(0, 0, W, h).data, rgbA, rgbB, view.opacity);
+      bx.putImageData(img, 0, 0);
+    } else {
+      bx.save();
+      bx.beginPath(); bx.rect(0, 0, W * view.p, h); bx.clip();
+      bx.fillStyle = "#fff"; bx.fillRect(0, 0, W, h);
+      bx.drawImage(bandA, 0, 0);
+      bx.restore();
+      const lw = Math.max(3, W / 900);
+      bx.fillStyle = "#7c6ff0";
+      bx.fillRect(W * view.p - lw / 2, 0, lw, h);
+    }
+    ctx.drawImage(bandB, 0, y0);
   }
-  tmp.width = tmp.height = 0;
+  bandA.width = bandA.height = bandB.width = bandB.height = 0;
   if (o.marks !== false) drawMarks(ctx, W, H, pa, pb);
   if (o.pins !== false) drawPins(ctx, W, H, pa, pb);
   return out;
@@ -2483,15 +2522,30 @@ function openPrintDlg() {
   document.querySelectorAll("input[name=pdStyle]").forEach((r) => { r.checked = r.value === view.mode; });
   $("pdMarks").checked = true;
   $("pdNotes").checked = true;
+  document.querySelector("input[name=pdQuality][value=high]").checked = true;
+  syncQuality();
   $("printDlg").classList.remove("hidden");
 }
+// High quality is for a few sheets at a time; more than that falls back to Standard.
+function syncQuality() {
+  const o = { scope: setS.on ? (document.querySelector("input[name=pdScope]:checked") || {}).value || "this" : "this", notes: $("pdNotes").checked };
+  const n = printItems(o).filter((it) => !it.noImage).length;
+  const high = document.querySelector("input[name=pdQuality][value=high]");
+  const std = document.querySelector("input[name=pdQuality][value=standard]");
+  const allowed = n <= PRINT_HIGH_MAX_SHEETS;
+  high.disabled = !allowed;
+  high.parentElement.classList.toggle("off", !allowed);
+  $("pdHighNote").textContent = allowed ? "Sharpest. Best for large prints." : `Only for ${PRINT_HIGH_MAX_SHEETS} sheets or fewer at a time, to keep memory use safe.`;
+  if (!allowed && high.checked) std.checked = true;
+}
+document.querySelectorAll("input[name=pdScope]").forEach((r) => r.addEventListener("change", syncQuality));
 function closePrintDlg() { $("printDlg").classList.add("hidden"); }
 $("pdCancel").addEventListener("click", closePrintDlg);
 $("printDlg").addEventListener("pointerdown", (e) => { if (e.target === $("printDlg")) closePrintDlg(); });
 $("pdGo").addEventListener("click", () => {
   const val = (name) => (document.querySelector(`input[name=${name}]:checked`) || {}).value;
   const o = { scope: setS.on ? val("pdScope") || "this" : "this", style: val("pdStyle") === "slider" ? "slider" : "overlay",
-              marks: $("pdMarks").checked, notes: $("pdNotes").checked };
+              quality: val("pdQuality") === "high" ? "high" : "standard", marks: $("pdMarks").checked, notes: $("pdNotes").checked };
   closePrintDlg();
   doPrint(o);
 });
@@ -2541,7 +2595,8 @@ async function buildPrint(urls, o, items, signal) {
   const sets = setS.on;
   $("printArea").classList.add("sets-print");
   $("printImg").removeAttribute("src");
-  const maxPx = items.filter((it) => !it.noImage).length === 1 ? PRINT_MAXPX : SET_PRINT_MAXPX;
+  const nSheets = items.filter((it) => !it.noImage).length;
+  const maxPx = o.quality === "high" && nSheets <= PRINT_HIGH_MAX_SHEETS ? PRINT_HIGH_PX : (nSheets > 6 ? SET_PRINT_MAXPX : PRINT_MAXPX);
 
   let landscape = true, first = true;
   const sections = [];
