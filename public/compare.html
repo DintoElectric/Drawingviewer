@@ -137,6 +137,24 @@
       <div class="vrule"></div>
 
       <button class="tbtn tbtn-text" id="noteBtn" aria-pressed="false"><i class="ph ph-map-pin-plus"></i><span>Add note</span></button>
+      <button class="tbtn tbtn-text" id="hlBtn" aria-pressed="false" title="Highlight areas on the drawing"><i class="ph ph-highlighter"></i><span>Highlight</span></button>
+      <div class="tgroup hidden" id="hlGroup">
+        <div class="seg" id="hlShapes" role="group" aria-label="Highlight shape">
+          <button class="seg-btn on" data-hlshape="rect" title="Drag a box"><i class="ph ph-rectangle"></i><span>Box</span></button>
+          <button class="seg-btn" data-hlshape="ellipse" title="Drag a circle"><i class="ph ph-circle"></i><span>Circle</span></button>
+          <button class="seg-btn" data-hlshape="free" title="Draw freehand with a marker"><i class="ph ph-pencil-simple-line"></i><span>Marker</span></button>
+        </div>
+        <div class="hl-colors" id="hlColors" role="group" aria-label="Highlight color">
+          <button class="hl-dot on" data-hlcolor="#ffd400" style="--c:#ffd400" aria-label="Yellow"></button>
+          <button class="hl-dot" data-hlcolor="#ff4fa3" style="--c:#ff4fa3" aria-label="Pink"></button>
+          <button class="hl-dot" data-hlcolor="#2ecc71" style="--c:#2ecc71" aria-label="Green"></button>
+          <button class="hl-dot" data-hlcolor="#ff8a00" style="--c:#ff8a00" aria-label="Orange"></button>
+          <button class="hl-dot" data-hlcolor="#3b82f6" style="--c:#3b82f6" aria-label="Blue"></button>
+        </div>
+        <button class="tbtn" id="hlUndo" title="Undo the last highlight" aria-label="Undo the last highlight" disabled><i class="ph ph-arrow-u-up-left"></i></button>
+        <button class="tbtn" id="hlDelete" title="Delete the selected highlight (tap one to select it)" aria-label="Delete the selected highlight" disabled><i class="ph ph-trash"></i></button>
+        <button class="tbtn tbtn-text" id="hlClear" title="Remove every highlight on this sheet"><span>Clear sheet</span></button>
+      </div>
       <button class="tbtn tbtn-text cp-notes-toggle" id="notesToggle"><i class="ph ph-list-bullets"></i><span id="notesToggleLabel">Notes (0)</span></button>
 
       <div class="vrule"></div>
@@ -173,7 +191,7 @@
         <div class="seg sp-filter" id="spFilter" role="group" aria-label="Filter sheets">
           <button class="seg-btn on" data-filter="all">All</button>
           <button class="seg-btn" data-filter="review">To review</button>
-          <button class="seg-btn" data-filter="notes">With notes</button>
+          <button class="seg-btn" data-filter="notes">Marked up</button>
         </div>
         <div class="sp-notice hidden" id="spNotice"></div>
         <div class="sp-list" id="spList"></div>
@@ -208,6 +226,7 @@
           <canvas id="cvB"></canvas>
           <canvas id="cvA" class="hidden"></canvas>
           <div class="divider" id="divider"><div class="handle"><i class="ph ph-arrows-left-right"></i></div></div>
+          <svg class="hl-layer" id="hlLayer" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
           <div class="pins" id="pins"></div>
         </div>
 
@@ -220,6 +239,8 @@
           <span><i class="sw sw-k"></i>Unchanged</span>
         </div>
         <div class="cp-banner hidden" id="noteBanner"><i class="ph ph-map-pin-plus"></i>Tap the drawing to drop a numbered note</div>
+
+        <div class="cp-banner hidden" id="hlBanner"><i class="ph ph-highlighter"></i>Drag on the drawing to highlight. Use two fingers to move or zoom.</div>
 
         <div class="empty hidden" id="empty"></div>
       </div>
@@ -317,6 +338,37 @@
       <div class="m-actions">
         <div class="spacer"></div>
         <button class="btn btn-secondary" id="busyCancel" style="min-height:40px">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- print options -->
+  <div class="backdrop hidden" id="printDlg">
+    <div class="modal cp-dlg" role="dialog" aria-modal="true" aria-labelledby="printDlgTitle">
+      <div class="m-head"><div><div class="m-title" id="printDlgTitle">Print</div><div class="m-sub" id="printDlgSub"></div></div></div>
+      <div class="m-body cp-dlg-body">
+        <div id="pdScopeWrap">
+          <div class="field-lbl">What to print</div>
+          <label class="pd-opt"><input type="radio" name="pdScope" value="this" checked><span>This sheet <small id="pdThis"></small></span></label>
+          <label class="pd-opt"><input type="radio" name="pdScope" value="changed"><span>Changed, new and removed sheets <small id="pdChanged"></small></span></label>
+          <label class="pd-opt"><input type="radio" name="pdScope" value="marked"><span>Sheets with notes or highlights <small id="pdMarked"></small></span></label>
+          <label class="pd-opt"><input type="radio" name="pdScope" value="all"><span>Every sheet <small id="pdAll"></small></span></label>
+        </div>
+        <div class="field-lbl">How it looks</div>
+        <label class="pd-opt"><input type="radio" name="pdStyle" value="overlay"><span>Overlay in colors <small>Older sheet in one color, newer in another, dark where they agree</small></span></label>
+        <label class="pd-opt"><input type="radio" name="pdStyle" value="slider"><span>Split view <small>Older on the left of the line, newer on the right</small></span></label>
+        <div id="pdQualityWrap">
+          <div class="field-lbl">Print quality</div>
+          <label class="pd-opt"><input type="radio" name="pdQuality" value="high" checked><span>High <small id="pdHighNote">Sharpest. Best for large prints.</small></span></label>
+          <label class="pd-opt"><input type="radio" name="pdQuality" value="standard"><span>Standard <small>Faster and lighter. Good for printing many sheets.</small></span></label>
+        </div>
+        <label class="pd-chk"><input type="checkbox" id="pdMarks" checked><span>Include highlights</span></label>
+        <label class="pd-chk"><input type="checkbox" id="pdNotes" checked><span>Include notes (numbered pins and a notes list)</span></label>
+      </div>
+      <div class="m-actions">
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" id="pdCancel" style="min-height:40px">Cancel</button>
+        <button class="btn btn-primary" id="pdGo" style="min-height:40px"><i class="ph ph-printer"></i>Print</button>
       </div>
     </div>
   </div>

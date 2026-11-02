@@ -32,6 +32,8 @@ const CHUNK_BYTES = 3 * 1024 * 1024;         // piece size (upload and download)
 const STALE_MS = 60 * 60 * 1000;             // half-finished uploads are cleared after 1 hour
 const MAX_NOTES = 500;
 const MAX_PAIRS = 1000;                      // sheet pairs in one whole-set comparison
+const MAX_MARKS = 400;                       // highlights in one comparison
+const MAX_MARK_POINTS = 600;                 // numbers (x,y pairs) in one freehand highlight
 const MB = 1024 * 1024;
 const CATS = ["Changed", "Added", "Removed", "Question", "Other"];
 const ID_RE = /^[a-z0-9]{8,32}$/;
@@ -91,6 +93,29 @@ function cleanNote(n) {
   };
 }
 
+// Highlights drawn on a sheet: a box, a circle or a freehand marker, all in positions 0..1 of the drawing.
+const MARK_SHAPES = ["rect", "ellipse", "free"];
+function cleanMark(m) {
+  if (!m || typeof m !== "object" || !MARK_SHAPES.includes(m.shape)) return null;
+  const base = {
+    id: str(m.id, 40) || crypto.randomBytes(4).toString("hex"),
+    pa: int(m.pa, 0, 9999, 1),
+    pb: int(m.pb, 0, 9999, 1),
+    shape: m.shape,
+    color: /^#[0-9a-fA-F]{6}$/.test(String(m.color)) ? String(m.color).toLowerCase() : "#ffd400",
+    t: num(m.t, 0, 4102444800000, Date.now()),
+  };
+  const r4 = (v) => Math.round(v * 10000) / 10000;
+  if (m.shape === "free") {
+    const pts = (Array.isArray(m.pts) ? m.pts : []).slice(0, MAX_MARK_POINTS).map((v) => r4(clamp(Number(v) || 0, 0, 1)));
+    if (pts.length % 2) pts.pop();
+    return pts.length >= 4 ? { ...base, pts } : null;
+  }
+  const x = clamp(num(m.x, 0, 1, 0), 0, 1), y = clamp(num(m.y, 0, 1, 0), 0, 1);
+  const w = clamp(num(m.w, 0, 1, 0), 0, 1 - x), h = clamp(num(m.h, 0, 1, 0), 0, 1 - y);
+  return w >= 0.002 && h >= 0.002 ? { ...base, x: r4(x), y: r4(y), w: r4(w), h: r4(h) } : null;
+}
+
 // Whole-set comparisons: which page of set A goes with which page of set B.
 function cleanSets(s) {
   if (!s || typeof s !== "object" || !s.on) return { on: false };
@@ -125,6 +150,7 @@ function cleanState(s) {
     view: { mode: v.mode === "overlay" ? "overlay" : "slider", p: num(v.p, 0, 1, 0.5), opacity: num(v.opacity, 0, 1, 1) },
     pages: { A: int(p.A, 1, 9999, 1), B: int(p.B, 1, 9999, 1) },
     sets: cleanSets(s.sets),
+    marks: (Array.isArray(s.marks) ? s.marks : []).slice(0, MAX_MARKS).map(cleanMark).filter(Boolean),
     savedAt: new Date().toISOString(),
   };
 }

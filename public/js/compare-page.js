@@ -62,7 +62,7 @@ const fmtWhen = (ms) => {
 
 // compare.html and this script are updated together. If the page on the site is older than the script,
 // say exactly that instead of failing silently.
-const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pins", "preparedBy", "printArea", "printBtn", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "setsPanel", "setsToggle", "setsToggleLabel", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
+const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "hlBanner", "hlBtn", "hlClear", "hlColors", "hlDelete", "hlGroup", "hlLayer", "hlShapes", "hlUndo", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pdAll", "pdCancel", "pdChanged", "pdGo", "pdHighNote", "pdMarked", "pdMarks", "pdNotes", "pdScopeWrap", "pdThis", "pins", "preparedBy", "printArea", "printBtn", "printDlg", "printDlgSub", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "savedSection", "setsPanel", "setsToggle", "setsToggleLabel", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
 const missingIds = REQUIRED_IDS.filter((id) => !document.getElementById(id));
 if (missingIds.length) {
   const bar = document.createElement("div");
@@ -78,6 +78,7 @@ const stage = $("stage");
 const divider = $("divider");
 const handle = divider.querySelector(".handle");
 const pinsEl = $("pins");
+const hlSvg = $("hlLayer");
 const emptyEl = $("empty");
 
 // overlay colors (a personal preference kept in this browser)
@@ -90,7 +91,9 @@ const MIN_Z = 0.4, MAX_Z = 12;
 const BASE_MAX_PX = 4e6;               // sheet bitmap cap: keeps sheets quick to draw and turn (zooming re-renders sharply)
 const DETAIL_MAX_PX = 9e6;
 const PRINT_MAXPX = 8e6;
-const SET_PRINT_MAXPX = 4e6;             // per-sheet overview when printing a whole set
+const SET_PRINT_MAXPX = 5e6;             // per-sheet picture when printing many sheets (Standard quality)
+const PRINT_HIGH_PX = 14e6;              // per-sheet picture at High quality (kept under the 16.7 million pixel limit of iPad Safari canvases)
+const PRINT_HIGH_MAX_SHEETS = 4;         // High quality is offered for this many sheets or fewer at once
 const CROP_W = 300, CROP_RATIO = 0.75, CROP_K = 2.4;   // crop region in stage units (stage width = 1000)
 const ZCOLS = 8, ZROWS = 6;
 
@@ -104,11 +107,17 @@ const CACHE_MAX = 8;                     // finished sheet bitmaps kept so turni
 
 /* ---------- state ---------- */
 const S = { z: 1, tx: 0, ty: 0, vw: 800, vh: 600, W0: 800, H0: 600 };
-const view = { mode: "slider", p: 0.5, opacity: 1, noting: false };
+const view = { mode: "slider", p: 0.5, opacity: 1, noting: false, hl: false };
 const slots = { A: null, B: null };      // {doc, page}   doc = {name, fp, file, numPages, getPage, destroy}; page 0 = blank (no matching sheet)
 let cpOn = false;
 let notes = [];                          // {id,x,y,pa,pb,cat,text,t}
 let selId = null;
+// highlights: {id, pa, pb, shape:"rect"|"ellipse"|"free", color, x,y,w,h | pts:[x,y,...], t}, positions 0..1 of the drawing
+let marks = [];
+let selHl = null;                        // the highlight that is selected (so it can be deleted or recoloured)
+let draft = null;                        // the highlight being drawn right now
+let hlShape = "rect", hlColor = "#ffd400";
+let hlStack = [];                        // ids in the order they were drawn, for Undo
 let edit = null;                         // note (or draft) open in the editor
 
 let cloudId = null;                      // id of the saved copy on the server (null = not saved)
@@ -447,7 +456,7 @@ async function mountInner(my, keep) {
   stage.classList.remove("hidden");
   emptyEl.classList.add("hidden");
   applyMode();
-  renderPins();
+  renderPins(); renderMarks();
   await Promise.all([renderBase(LB), renderBase(LA)]);
   if (my !== mountSeq) return;
   scheduleDetail(60);
@@ -1037,7 +1046,7 @@ function renderSetsList() {
 
   const keep = (p) => {
     if (setS.filter === "review") return ["changed", "onlyA", "onlyB", "unknown"].includes(statusOf(p));
-    if (setS.filter === "notes") return notesOnPair(p) > 0;
+    if (setS.filter === "notes") return notesOnPair(p) > 0 || marksOnPair(p) > 0;
     return true;
   };
   const rows = [];
@@ -1049,10 +1058,10 @@ function renderSetsList() {
       <span class="sp-num">${esc(p.num || "Sheet " + (i + 1))}</span>
       <span class="sp-title">${esc(p.title)}</span>
       ${nn ? `<span class="sp-n">${nn}</span>` : "<span></span>"}
-      <span class="sp-tag">${esc(STATUS_SHORT[st])}${p.manual ? " · paired by hand" : ""}</span>
+      <span class="sp-tag">${esc(STATUS_SHORT[st])}${p.manual ? " · paired by hand" : ""}${marksOnPair(p) ? " · highlighted" : ""}</span>
     </div>`);
   });
-  $("spList").innerHTML = rows.length ? rows.join("") : `<div class="sp-empty">${setS.filter === "notes" ? "No notes yet." : "Nothing to review here."}</div>`;
+  $("spList").innerHTML = rows.length ? rows.join("") : `<div class="sp-empty">${setS.filter === "notes" ? "Nothing marked up yet." : "Nothing to review here."}</div>`;
   const cur = $("spList").querySelector(".sp-row.cur");
   if (cur && cur.scrollIntoView && !listRaf) cur.scrollIntoView({ block: "nearest" });
 }
@@ -1234,7 +1243,7 @@ function syncMatchBtn() {
 // any pair of pages that a note was made on is kept as a pair, even if the automatic match would pair them differently.
 function keepNotePairs() {
   const combos = new Map();
-  notes.forEach((n) => { if (n.pa && n.pb) combos.set(n.pa + ":" + n.pb, [n.pa, n.pb]); });
+  [...notes, ...marks].forEach((n) => { if (n.pa && n.pb) combos.set(n.pa + ":" + n.pb, [n.pa, n.pb]); });
   let forced = 0;
   for (const [a, b] of combos.values()) {
     if (setS.pairs.some((p) => p.a === a && p.b === b)) continue;
@@ -1317,6 +1326,7 @@ async function swapAB() {
   detachCloud();
   [slots.A, slots.B] = [slots.B, slots.A];
   notes.forEach((n) => { const t = n.pa; n.pa = n.pb; n.pb = t; });
+  marks.forEach((m) => { const t = m.pa; m.pa = m.pb; m.pb = t; });
   if (setS.on) {
     setS.pairs.forEach((p) => { const t = p.a; p.a = p.b; p.b = t; });
     [setS.idx.A, setS.idx.B] = [setS.idx.B, setS.idx.A];
@@ -1378,6 +1388,7 @@ async function startOver() {
   for (const L of [LA, LB]) { cancel(L.baseTask); clearDetail(L); L.page = null; }
   resetSlots();
   notes = []; selId = null;
+  marks = []; selHl = null; draft = null; hlStack = []; setHl(false);
   stage.classList.add("hidden");
   $("cpApp").classList.add("hidden");
   $("newBtn").classList.add("hidden");
@@ -1398,6 +1409,7 @@ function currentState() {
     view: { mode: view.mode, p: view.p, opacity: view.opacity },
     pages: { A: slots.A ? Math.max(1, slots.A.page) : 1, B: slots.B ? Math.max(1, slots.B.page) : 1 },
     sets: setS.on ? currentSets() : { on: false },
+    marks: marks.map((m) => ({ ...m })),
   };
 }
 
@@ -1407,6 +1419,7 @@ function applyState(s) {
   notes = (Array.isArray(s.notes) ? s.notes : []).map((n) => ({
     id: n.id, x: n.x, y: n.y, pa: n.pa, pb: n.pb, cat: n.cat, text: n.text || "", t: n.t || Date.now(),
   }));
+  marks = cloud.cleanMarks(s.marks); selHl = null; draft = null; hlStack = [];
   $("docTitle").value = s.title || "";
   let by = s.preparedBy || "";
   if (!by) { try { by = localStorage.getItem("dh-compare-by") || ""; } catch (e) {} }
@@ -1761,10 +1774,12 @@ document.addEventListener("keydown", (e) => {
   if (!$("renameDlg").classList.contains("hidden")) { if (e.key === "Escape") closeRename(); return; }
   if (!$("fullDlg").classList.contains("hidden")) { if (e.key === "Escape") closeFull(); return; }
   if (!$("noteDlg").classList.contains("hidden")) { if (e.key === "Escape") closeEditor(); return; }
-  if (e.key === "Escape") { closeMenu(); if (view.noting) setNoting(false); return; }
+  if (!$("printDlg").classList.contains("hidden")) { if (e.key === "Escape") closePrintDlg(); return; }
+  if (e.key === "Escape") { closeMenu(); if (view.noting) setNoting(false); if (view.hl) setHl(false); return; }
   if (!cpOn) return;
   if (e.target.matches && e.target.matches("input,select,textarea")) return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); doPrint(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); openPrintDlg(); return; }
+  if (view.hl && selHl && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteMark(selHl); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === "+" || e.key === "=") { withAnim(() => zoomAt(S.z * 1.25, S.vw / 2, S.vh / 2)); scheduleDetail(260); }
   else if (e.key === "-") { withAnim(() => zoomAt(S.z / 1.25, S.vw / 2, S.vh / 2)); scheduleDetail(260); }
@@ -1808,6 +1823,7 @@ function beginGesture() {
   if (pts.length === 1) {
     g = { type: "pan", sx: pts[0].x, sy: pts[0].y, tx0: S.tx, ty0: S.ty, moved: 0, t0: performance.now(), multi: false };
   } else if (pts.length === 2) {
+    if (draft) { draft = null; renderMarks(); }              // a second finger means zoom, not draw
     const [a, b] = pts;
     g = { type: "pinch", d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
           mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, z0: S.z, tx0: S.tx, ty0: S.ty };
@@ -1840,15 +1856,18 @@ viewport.addEventListener("pointerdown", (e) => {
   if (ptrs.size >= 2) return;
   try { viewport.setPointerCapture(e.pointerId); } catch (err) {}
   ptrs.set(e.pointerId, relPos(e));
-  beginGesture();
-  viewport.classList.add("grabbing");
+  if (view.hl && ptrs.size === 1) startDraw(ptrs.get(e.pointerId));      // highlighting: one finger draws
+  else beginGesture();
+  if (!view.hl) viewport.classList.add("grabbing");
 });
 
 viewport.addEventListener("pointermove", (e) => {
   const p = ptrs.get(e.pointerId);
   if (!p || !g) return;
   Object.assign(p, relPos(e));
-  if (g.type === "pan" && ptrs.size === 1) {
+  if (g.type === "draw" && ptrs.size === 1) {
+    moveDraw(p);
+  } else if (g.type === "pan" && ptrs.size === 1) {
     const dx = p.x - g.sx, dy = p.y - g.sy;
     g.moved = Math.max(g.moved, Math.hypot(dx, dy));
     S.tx = g.tx0 + dx; S.ty = g.ty0 + dy;
@@ -1868,7 +1887,14 @@ function endPointer(e) {
   if (!ptrs.has(e.pointerId)) return;
   const was = ptrs.size;
   ptrs.delete(e.pointerId);
-  if (g && g.type === "pan" && was === 1) {
+  if (g && g.type === "draw" && was === 1) {
+    const tap = g.moved < 8 && performance.now() - g.t0 < 500;
+    const at = { x: g.sx, y: g.sy };
+    g = null;
+    if (e.type === "pointerup" && draft) finishDraw();
+    else if (e.type === "pointerup" && tap) hlTap(at.x, at.y);
+    else { draft = null; renderMarks(); }
+  } else if (g && g.type === "pan" && was === 1) {
     const dt = performance.now() - g.t0;
     if (!g.multi && g.moved < 8 && dt < 400 && e.type === "pointerup") onTap(g.sx, g.sy);
     g = null;
@@ -1905,6 +1931,7 @@ viewport.addEventListener("gesturechange", (e) => {
 });
 viewport.addEventListener("gestureend", (e) => { e.preventDefault(); scheduleDetail(); });
 viewport.addEventListener("dblclick", (e) => e.preventDefault());
+viewport.addEventListener("dragstart", (e) => e.preventDefault());          // a drag on the drawing is never a text/image drag
 
 let resizeTimer = null;
 new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(onResize, 120); }).observe(viewport);
@@ -1930,6 +1957,7 @@ function zoneOf(x, y) {
 const ZONE_NOTE = `Zone = row letter (A–${String.fromCharCode(64 + ZROWS)}, top to bottom) and column number (1–${ZCOLS}, left to right) on Drawing B.`;
 
 function setNoting(on) {
+  if (on && view.hl) setHl(false);
   view.noting = on;
   $("noteBtn").setAttribute("aria-pressed", String(on));
   $("noteBtn").classList.toggle("on", on);
@@ -1938,6 +1966,158 @@ function setNoting(on) {
 }
 $("noteBtn").addEventListener("click", () => setNoting(!view.noting));
 $("notesToggle").addEventListener("click", () => $("notesPanel").classList.toggle("open"));
+
+// ---------- highlights on screen ----------
+const r4 = (v) => Math.round(v * 10000) / 10000;
+function markSvg(m, W, H, cls = "") {
+  const sel = m.id && m.id === selHl ? " sel" : "";
+  const st = `style="--c:${m.color}"`;
+  if (m.shape === "free") {
+    const pts = [];
+    for (let i = 0; i + 1 < m.pts.length; i += 2) pts.push((m.pts[i] * W).toFixed(1) + "," + (m.pts[i + 1] * H).toFixed(1));
+    return `<polyline class="hl hl-free${sel}${cls}" points="${pts.join(" ")}" ${st}/>`;
+  }
+  if (m.shape === "ellipse") {
+    return `<ellipse class="hl${sel}${cls}" cx="${((m.x + m.w / 2) * W).toFixed(1)}" cy="${((m.y + m.h / 2) * H).toFixed(1)}" rx="${(m.w * W / 2).toFixed(1)}" ry="${(m.h * H / 2).toFixed(1)}" ${st}/>`;
+  }
+  return `<rect class="hl${sel}${cls}" x="${(m.x * W).toFixed(1)}" y="${(m.y * H).toFixed(1)}" width="${(m.w * W).toFixed(1)}" height="${(m.h * H).toFixed(1)}" rx="2" ${st}/>`;
+}
+function renderMarks() {
+  if (!slots.A || !slots.B) { hlSvg.innerHTML = ""; return; }
+  const W = S.W0, H = S.H0;
+  hlSvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  hlSvg.setAttribute("width", W); hlSvg.setAttribute("height", H);
+  let html = "";
+  for (const m of marks) if (onThisView(m)) html += markSvg(m, W, H);
+  if (draft) html += markSvg(draft, W, H, " hl-draft");
+  hlSvg.innerHTML = html;
+}
+const marksOnPair = (p) => marks.filter((m) => m.pa === p.a && m.pb === p.b).length;
+
+function syncHlButtons() {
+  $("hlUndo").disabled = !hlStack.some((id) => marks.some((m) => m.id === id));
+  $("hlDelete").disabled = !selHl;
+}
+function setHl(on) {
+  if (on) setNoting(false);
+  view.hl = on;
+  $("hlBtn").setAttribute("aria-pressed", String(on));
+  $("hlBtn").classList.toggle("on", on);
+  $("hlGroup").classList.toggle("hidden", !on);
+  $("hlBanner").classList.toggle("hidden", !on);
+  viewport.classList.toggle("highlighting", on);
+  if (!on) { selHl = null; draft = null; }
+  renderMarks(); syncHlButtons();
+}
+function deleteMark(id) {
+  marks = marks.filter((m) => m.id !== id);
+  if (selHl === id) selHl = null;
+  changed(); renderMarks(); syncHlButtons();
+}
+function distToSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 ? clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+// X, Y = a point on the drawing in pixels at 100% zoom; tol = how close counts as a hit
+function markHit(m, X, Y, tol) {
+  const W = S.W0, H = S.H0;
+  if (m.shape === "rect") return X >= m.x * W - tol && X <= (m.x + m.w) * W + tol && Y >= m.y * H - tol && Y <= (m.y + m.h) * H + tol;
+  if (m.shape === "ellipse") {
+    const cx = (m.x + m.w / 2) * W, cy = (m.y + m.h / 2) * H, rx = (m.w * W) / 2 + tol, ry = (m.h * H) / 2 + tol;
+    return ((X - cx) / rx) ** 2 + ((Y - cy) / ry) ** 2 <= 1;
+  }
+  for (let i = 0; i + 3 < m.pts.length; i += 2) {
+    if (distToSeg(X, Y, m.pts[i] * W, m.pts[i + 1] * H, m.pts[i + 2] * W, m.pts[i + 3] * H) <= tol + 8 / S.z) return true;
+  }
+  return false;
+}
+function hitMark(x, y) {                       // x, y = a point in the drawing area
+  const X = (x - S.tx) / S.z, Y = (y - S.ty) / S.z, tol = 12 / S.z;
+  for (let i = marks.length - 1; i >= 0; i--) {
+    if (onThisView(marks[i]) && markHit(marks[i], X, Y, tol)) return marks[i];
+  }
+  return null;
+}
+function hlTap(x, y) {
+  const m = hitMark(x, y);
+  selHl = m ? m.id : null;
+  renderMarks(); syncHlButtons();
+}
+function startDraw(p) {
+  g = { type: "draw", sx: p.x, sy: p.y, f0: { x: (p.x - S.tx) / (S.z * S.W0), y: (p.y - S.ty) / (S.z * S.H0) }, moved: 0, t0: performance.now() };
+  draft = null;
+}
+function moveDraw(p) {
+  g.moved = Math.max(g.moved, Math.hypot(p.x - g.sx, p.y - g.sy));
+  if (g.moved < 6) return;                      // still a tap
+  const cx = clamp((p.x - S.tx) / (S.z * S.W0), 0, 1), cy = clamp((p.y - S.ty) / (S.z * S.H0), 0, 1);
+  const x0 = clamp(g.f0.x, 0, 1), y0 = clamp(g.f0.y, 0, 1);
+  if (hlShape === "free") {
+    if (!draft) draft = { shape: "free", color: hlColor, pts: [x0, y0], k: 1 };
+    const n = draft.pts.length;
+    if (Math.hypot((cx - draft.pts[n - 2]) * S.W0, (cy - draft.pts[n - 1]) * S.H0) >= (2 * draft.k) / S.z) {
+      draft.pts.push(cx, cy);
+      if (draft.pts.length >= 560) {            // a very long stroke: keep every second point and sample more coarsely
+        const thin = [];
+        for (let i = 0; i + 1 < draft.pts.length; i += 4) thin.push(draft.pts[i], draft.pts[i + 1]);
+        thin.push(cx, cy);
+        draft.pts = thin; draft.k *= 2;
+      }
+    }
+  } else {
+    draft = { shape: hlShape, color: hlColor, x: Math.min(x0, cx), y: Math.min(y0, cy), w: Math.abs(cx - x0), h: Math.abs(cy - y0) };
+  }
+  renderMarks();
+}
+function finishDraw() {
+  const d = draft;
+  draft = null;
+  if (!d) { renderMarks(); return; }
+  const m = { id: newId(), pa: slots.A.page, pb: slots.B.page, shape: d.shape, color: d.color, t: Date.now() };
+  if (d.shape === "free") {
+    if (d.pts.length < 4) { renderMarks(); return; }
+    m.pts = d.pts.map(r4);
+  } else {
+    if (d.w < 0.004 || d.h < 0.004) { renderMarks(); return; }       // too small to be intentional
+    m.x = r4(d.x); m.y = r4(d.y); m.w = r4(d.w); m.h = r4(d.h);
+  }
+  marks.push(m);
+  selHl = m.id; hlStack.push(m.id);
+  changed(); renderMarks(); syncHlButtons();
+}
+
+$("hlBtn").addEventListener("click", () => setHl(!view.hl));
+$("hlShapes").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-hlshape]");
+  if (!b) return;
+  hlShape = b.dataset.hlshape;
+  $("hlShapes").querySelectorAll("[data-hlshape]").forEach((x) => x.classList.toggle("on", x === b));
+});
+$("hlColors").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-hlcolor]");
+  if (!b) return;
+  hlColor = b.dataset.hlcolor;
+  $("hlColors").querySelectorAll("[data-hlcolor]").forEach((x) => x.classList.toggle("on", x === b));
+  const m = selHl && marks.find((x) => x.id === selHl);         // a selected highlight takes the new color
+  if (m) { m.color = hlColor; changed(); renderMarks(); }
+});
+$("hlUndo").addEventListener("click", () => {
+  while (hlStack.length) {
+    const id = hlStack.pop();
+    if (marks.some((m) => m.id === id)) { deleteMark(id); break; }
+  }
+  syncHlButtons();
+});
+$("hlDelete").addEventListener("click", () => { if (selHl) deleteMark(selHl); });
+$("hlClear").addEventListener("click", () => {
+  const here = marks.filter(onThisView);
+  if (!here.length) return;
+  if (!confirm(`Remove ${here.length === 1 ? "the highlight" : `all ${here.length} highlights`} on this sheet?`)) return;
+  marks = marks.filter((m) => !onThisView(m));
+  selHl = null;
+  changed(); renderMarks(); syncHlButtons();
+});
 
 function renderPins() {
   pinsEl.innerHTML = notes.map((n, i) => onThisView(n)
@@ -2064,7 +2244,7 @@ function persist() {
   try {
     const key = stateKey();
     localStorage.setItem(key, JSON.stringify({
-      title: $("docTitle").value, preparedBy: $("preparedBy").value, notes, t: Date.now(),
+      title: $("docTitle").value, preparedBy: $("preparedBy").value, notes, marks, t: Date.now(),
       sets: setS.on ? { ...currentSets(), fpA: slots.A.doc.fp } : null,
     }));
     let idx = JSON.parse(localStorage.getItem(LS_INDEX) || "[]").filter((k) => k !== key);
@@ -2083,7 +2263,7 @@ function readLocalSets() {
   } catch (e) { return null; }
 }
 function loadState() {
-  notes = [];
+  notes = []; marks = []; selHl = null; draft = null; hlStack = [];
   let title = "", by = "";
   try {
     const raw = localStorage.getItem(stateKey());
@@ -2091,6 +2271,7 @@ function loadState() {
       const d = JSON.parse(raw);
       title = d.title || ""; by = d.preparedBy || "";
       if (Array.isArray(d.notes)) notes = d.notes.filter((n) => n && typeof n.x === "number" && typeof n.y === "number" && n.cat);
+      marks = cloud.cleanMarks(d.marks);
     }
   } catch (e) { /* ignore */ }
   if (!by) { try { by = localStorage.getItem("dh-compare-by") || ""; } catch (e) {} }
@@ -2143,8 +2324,66 @@ function drawPins(ctx, W, H, pa, pb) {
   ctx.restore();
 }
 
-// One pair of pages (default: the pair on screen) as a single image, with its note pins.
-async function buildOverview(maxPx, pa = slots.A.page, pb = slots.B.page) {
+const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+
+// Overlay of two sheets drawn on white (b = newer, a = older; RGBA data, b is rewritten):
+//   line work in both sheets  -> clean black, at full sharpness
+//   only in the older sheet   -> the older sheet's color
+//   only in the newer sheet   -> the newer sheet's color
+// Partly covered (anti-aliased) edge pixels keep their softness instead of being tinted a muddy in-between color.
+function composeOverlay(b, a, colA, colB, opacity) {
+  for (let i = 0; i < b.length; i += 4) {
+    const inkB = 255 - Math.min(b[i], b[i + 1], b[i + 2]);
+    const inkA = (255 - Math.min(a[i], a[i + 1], a[i + 2])) * opacity;
+    if (inkA <= 0 && inkB <= 0) { b[i] = b[i + 1] = b[i + 2] = 255; b[i + 3] = 255; continue; }
+    const both = inkA < inkB ? inkA : inkB;
+    const only = Math.abs(inkA - inkB) / 255;                 // how much of this pixel belongs to just one sheet
+    const col = inkA > inkB ? colA : colB;
+    const base = 255 - both;
+    b[i] = base * (1 - only) + col[0] * only;
+    b[i + 1] = base * (1 - only) + col[1] * only;
+    b[i + 2] = base * (1 - only) + col[2] * only;
+    b[i + 3] = 255;
+  }
+}
+
+// Like renderFit, but draws only the band of the finished W x H picture that starts at row y0 (the canvas is the band).
+function renderFitBand(page, canvas, W, H, y0) {
+  const v1 = page.getViewport({ scale: 1 });
+  const s = Math.min(W / v1.width, H / v1.height);
+  const vp = page.getViewport({ scale: s, offsetX: (W - v1.width * s) / 2, offsetY: (H - v1.height * s) / 2 - y0 });
+  return page.render({ canvasContext: canvas.getContext("2d"), viewport: vp });
+}
+
+// Highlights for one pair of pages, drawn onto a finished image (same look as on screen).
+function drawMarks(ctx, W, H, pa, pb) {
+  const lw = Math.max(2, W / 400), mw = Math.max(8, W / 70);
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";                      // line work shows through, like a real highlighter
+  ctx.lineCap = ctx.lineJoin = "round";
+  for (const m of marks) {
+    if (m.pa !== pa || m.pb !== pb) continue;
+    ctx.strokeStyle = ctx.fillStyle = m.color;
+    if (m.shape === "free") {
+      ctx.globalAlpha = 0.45; ctx.lineWidth = mw;
+      ctx.beginPath();
+      for (let i = 0; i + 1 < m.pts.length; i += 2) { if (i) ctx.lineTo(m.pts[i] * W, m.pts[i + 1] * H); else ctx.moveTo(m.pts[0] * W, m.pts[1] * H); }
+      ctx.stroke();
+      continue;
+    }
+    ctx.beginPath();
+    if (m.shape === "ellipse") ctx.ellipse((m.x + m.w / 2) * W, (m.y + m.h / 2) * H, (m.w * W) / 2, (m.h * H) / 2, 0, 0, Math.PI * 2);
+    else ctx.rect(m.x * W, m.y * H, m.w * W, m.h * H);
+    ctx.globalAlpha = 0.3; ctx.fill();
+    ctx.globalAlpha = 1; ctx.lineWidth = lw; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// One pair of pages (default: the pair on screen) as a single image.
+// o = { mode: "overlay" | "slider" (default: as on screen), marks: draw highlights (default yes), pins: draw note pins (default yes) }
+async function buildOverview(maxPx, pa = slots.A.page, pb = slots.B.page, o = {}) {
+  const mode = o.mode || view.mode;
   const { pageA, pageB } = await pagePair(pa, pb);
   const vB = pageB.getViewport({ scale: 1 });
   let s = Math.min(Math.sqrt(maxPx / (vB.width * vB.height)), 4.2);
@@ -2154,31 +2393,40 @@ async function buildOverview(maxPx, pa = slots.A.page, pb = slots.B.page) {
   out.width = W; out.height = H;
   const ctx = out.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-  await renderFit(pageB, out).promise;
 
-  const tmp = document.createElement("canvas");
-  tmp.width = W; tmp.height = H;
-  await renderFit(pageA, tmp).promise;
-  if (view.mode === "overlay") {
-    const col = colors.get();
-    tintCanvas(out, col.b);            // Drawing B (newer) in its color
-    tintCanvas(tmp, col.a);            // Drawing A (older) in its color
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = view.opacity;
-    ctx.drawImage(tmp, 0, 0);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
-  } else {
-    ctx.save();
-    ctx.beginPath(); ctx.rect(0, 0, W * view.p, H); ctx.clip();
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-    ctx.drawImage(tmp, 0, 0);
-    ctx.restore();
-    const lw = Math.max(3, W / 900);
-    ctx.fillStyle = "#7c6ff0";
-    ctx.fillRect(W * view.p - lw / 2, 0, lw, H);
+  // Built a strip at a time: the two sheets are drawn, combined, and added to the picture, so memory use
+  // stays modest even for very large, sharp pictures.
+  const bandH = Math.max(64, Math.min(H, o.bandH || 1200));
+  const bandB = document.createElement("canvas"), bandA = document.createElement("canvas");
+  const col = colors.get();
+  const rgbA = hexRgb(col.a), rgbB = hexRgb(col.b);
+  for (let y0 = 0; y0 < H; y0 += bandH) {
+    const h = Math.min(bandH, H - y0);
+    bandB.width = W; bandB.height = h; bandA.width = W; bandA.height = h;          // resizing a canvas clears it
+    const bx = bandB.getContext("2d"), ax = bandA.getContext("2d");
+    bx.fillStyle = "#fff"; bx.fillRect(0, 0, W, h);
+    ax.fillStyle = "#fff"; ax.fillRect(0, 0, W, h);                                // a missing sheet is plain white (transparent would be filled by the tint)
+    await renderFitBand(pageB, bandB, W, H, y0).promise;
+    await renderFitBand(pageA, bandA, W, H, y0).promise;
+    if (mode === "overlay") {
+      const img = bx.getImageData(0, 0, W, h);
+      composeOverlay(img.data, ax.getImageData(0, 0, W, h).data, rgbA, rgbB, view.opacity);
+      bx.putImageData(img, 0, 0);
+    } else {
+      bx.save();
+      bx.beginPath(); bx.rect(0, 0, W * view.p, h); bx.clip();
+      bx.fillStyle = "#fff"; bx.fillRect(0, 0, W, h);
+      bx.drawImage(bandA, 0, 0);
+      bx.restore();
+      const lw = Math.max(3, W / 900);
+      bx.fillStyle = "#7c6ff0";
+      bx.fillRect(W * view.p - lw / 2, 0, lw, h);
+    }
+    ctx.drawImage(bandB, 0, y0);
   }
-  tmp.width = tmp.height = 0;
-  drawPins(ctx, W, H, pa, pb);
+  bandA.width = bandA.height = bandB.width = bandB.height = 0;
+  if (o.marks !== false) drawMarks(ctx, W, H, pa, pb);
+  if (o.pins !== false) drawPins(ctx, W, H, pa, pb);
   return out;
 }
 
@@ -2241,125 +2489,176 @@ async function cropUrls(n, urls) {
   return [ua, ub];
 }
 
-async function doPrint() {
-  if (!cpOn || !LB.page || !LA.page) return;
-  const btn = $("printBtn"), label = btn.querySelector("span");
-  const prev = label ? label.textContent : "";
-  btn.disabled = true;
-  if (label) label.textContent = "Preparing…";
+const isChanged = (p) => ["changed", "onlyA", "onlyB", "unknown"].includes(statusOf(p));
+const hasMarkup = (p) => notesOnPair(p) > 0 || marksOnPair(p) > 0;
+// the sheet pair on screen (or, if the view isn't a matched pair, the two pages being shown)
+function printCurrent() {
+  const p = setS.pairs.find((q) => q.a === slots.A.page && q.b === slots.B.page);
+  return p || { a: slots.A.page, b: slots.B.page, num: "Current view", title: "", adhoc: true };
+}
+
+function openPrintDlg() {
+  if (!cpOn) return;
+  const sets = setS.on;
+  $("pdScopeWrap").classList.toggle("hidden", !sets);
+  if (sets) {
+    const cur = printCurrent();
+    const counts = { changed: setS.pairs.filter(isChanged).length, marked: setS.pairs.filter(hasMarkup).length, all: setS.pairs.length };
+    $("pdThis").textContent = `(${cur.num})`;
+    $("pdChanged").textContent = `(${counts.changed})`;
+    $("pdMarked").textContent = `(${counts.marked})`;
+    $("pdAll").textContent = `(${counts.all})`;
+    document.querySelectorAll("input[name=pdScope]").forEach((r) => {
+      const n = r.value === "this" ? 1 : counts[r.value];
+      r.disabled = n === 0;
+      r.parentElement.classList.toggle("off", n === 0);
+      r.checked = r.value === "this";
+    });
+    const waiting = setS.pairs.filter((p) => statusOf(p) === "pending").length;
+    $("printDlgSub").textContent = waiting ? `${waiting} sheet${waiting === 1 ? " is" : "s are"} still being checked for changes, so they may be missing from "Changed".` : "";
+  } else {
+    $("printDlgSub").textContent = "";
+  }
+  document.querySelectorAll("input[name=pdStyle]").forEach((r) => { r.checked = r.value === view.mode; });
+  $("pdMarks").checked = true;
+  $("pdNotes").checked = true;
+  document.querySelector("input[name=pdQuality][value=high]").checked = true;
+  syncQuality();
+  $("printDlg").classList.remove("hidden");
+}
+// High quality is for a few sheets at a time; more than that falls back to Standard.
+function syncQuality() {
+  const o = { scope: setS.on ? (document.querySelector("input[name=pdScope]:checked") || {}).value || "this" : "this", notes: $("pdNotes").checked };
+  const n = printItems(o).filter((it) => !it.noImage).length;
+  const high = document.querySelector("input[name=pdQuality][value=high]");
+  const std = document.querySelector("input[name=pdQuality][value=standard]");
+  const allowed = n <= PRINT_HIGH_MAX_SHEETS;
+  high.disabled = !allowed;
+  high.parentElement.classList.toggle("off", !allowed);
+  $("pdHighNote").textContent = allowed ? "Sharpest. Best for large prints." : `Only for ${PRINT_HIGH_MAX_SHEETS} sheets or fewer at a time, to keep memory use safe.`;
+  if (!allowed && high.checked) std.checked = true;
+}
+document.querySelectorAll("input[name=pdScope]").forEach((r) => r.addEventListener("change", syncQuality));
+function closePrintDlg() { $("printDlg").classList.add("hidden"); }
+$("pdCancel").addEventListener("click", closePrintDlg);
+$("printDlg").addEventListener("pointerdown", (e) => { if (e.target === $("printDlg")) closePrintDlg(); });
+$("pdGo").addEventListener("click", () => {
+  const val = (name) => (document.querySelector(`input[name=${name}]:checked`) || {}).value;
+  const o = { scope: setS.on ? val("pdScope") || "this" : "this", style: val("pdStyle") === "slider" ? "slider" : "overlay",
+              quality: val("pdQuality") === "high" ? "high" : "standard", marks: $("pdMarks").checked, notes: $("pdNotes").checked };
+  closePrintDlg();
+  doPrint(o);
+});
+
+// The sheets a print will contain.
+function printItems(o) {
+  if (!setS.on) return [{ pa: slots.A.page, pb: slots.B.page, num: "", title: "", status: "", list: o.notes ? notes.slice() : [] }];
+  const mk = (p) => ({ pa: p.a, pb: p.b, num: p.num, title: p.title, status: p.adhoc ? "" : STATUS_TEXT[statusOf(p)],
+                       list: o.notes ? notes.filter((n) => n.pa === p.a && n.pb === p.b) : [] });
+  let pairs;
+  if (o.scope === "this") pairs = [printCurrent()];
+  else if (o.scope === "changed") pairs = setS.pairs.filter(isChanged);
+  else if (o.scope === "marked") pairs = setS.pairs.filter(hasMarkup);
+  else pairs = setS.pairs.slice();
+  const items = pairs.map(mk);
+  if (o.notes && (o.scope === "marked" || o.scope === "all")) {          // notes whose sheet pairing was changed afterwards
+    const seen = new Set(items.flatMap((it) => it.list.map((n) => n.id)));
+    const orphans = notes.filter((n) => !seen.has(n.id));
+    if (orphans.length) items.push({ num: "Other notes", title: "", status: "", list: orphans, noImage: true });
+  }
+  return items;
+}
+
+async function doPrint(o) {
+  if (!cpOn) return;
+  const items = printItems(o);
+  if (!items.length) { flash("Nothing to print for that choice", ""); return; }
+  const ctl = new AbortController();
+  busyShow("Preparing your print…", "Starting…", ctl);
   const urls = [];
   try {
-    if (setS.on) await buildSetPrint(urls);
-    else await buildSinglePrint(urls);
+    await buildPrint(urls, o, items, ctl.signal);
     printUrls.forEach((u) => URL.revokeObjectURL(u));
     printUrls = urls;
     await Promise.all([...$("printArea").querySelectorAll("img")].map((im) => im.decode().catch(() => {})));
+    busyHide();
     window.print();
   } catch (e) {
     urls.forEach((u) => URL.revokeObjectURL(u));
-    flash("Couldn't prepare the print", e.message);
-  } finally {
-    btn.disabled = false;
-    if (label) label.textContent = prev;
+    busyHide();
+    if (e.message !== "Cancelled.") flash("Couldn't prepare the print", e.message);
   }
 }
 
-async function buildSinglePrint(urls) {
-  $("printArea").classList.remove("sets-print");
-  const canvas = await buildOverview(PRINT_MAXPX);
-  const landscape = canvas.width >= canvas.height;
-  const ovUrl = URL.createObjectURL(await canvasBlob(canvas));
-  canvas.width = canvas.height = 0;
-  urls.push(ovUrl);
-
-  const rows = [];
-  for (let i = 0; i < notes.length; i++) {
-    const [ua, ub] = await cropUrls(notes[i], urls);
-    rows.push(noteRowHtml(notes[i], i, ua, ub, false));
-  }
-
-  const printed = new Date().toLocaleDateString();
-  const modeText = view.mode === "overlay"
-    ? colors.overlayText("A", "B")
-    : "Slider: A is left of the line, B is right of it";
-  const by = $("preparedBy").value.trim();
-  $("printHead").innerHTML =
-    `<div class="ph-title"><b>${esc(titleOrDefault())}</b></div>` +
-    `<div class="ph-sub">A (before): ${esc(slots.A.doc.name)} · B (after): ${esc(slots.B.doc.name)}</div>` +
-    `<div class="ph-sub">${esc(modeText)} · ${by ? "Prepared by " + esc(by) + " · " : ""}Printed ${esc(printed)}</div>`;
-  $("printNotes").innerHTML = notes.length
-    ? `<div class="pn-title">Notes (${notes.length})</div>
-       <table class="pn-table">${NOTE_HEAD}<tbody>${rows.join("")}</tbody></table>
-       <div class="pn-foot">${esc(ZONE_NOTE)}</div>`
-    : `<div class="pn-title">No notes recorded</div>`;
-  setPageStyle(landscape);
-  $("printImg").src = ovUrl;
-}
-
-// A whole set: a summary of every sheet, then one section per sheet that has notes.
-async function buildSetPrint(urls) {
+// One page per sheet: a heading, the drawing (overlay or split view, with highlights), and that sheet's notes.
+async function buildPrint(urls, o, items, signal) {
+  const sets = setS.on;
   $("printArea").classList.add("sets-print");
   $("printImg").removeAttribute("src");
-
-  const groups = [];
-  const seen = new Set();
-  setS.pairs.forEach((p) => {
-    const list = notes.filter((n) => n.pa === p.a && n.pb === p.b);
-    if (!list.length) return;
-    list.forEach((n) => seen.add(n.id));
-    groups.push({ num: p.num, title: p.title, status: STATUS_TEXT[statusOf(p)], pa: p.a, pb: p.b, list });
-  });
-  const orphans = notes.filter((n) => !seen.has(n.id));
-  if (orphans.length) groups.push({ num: "Other notes", title: "", status: "", list: orphans, noImage: true });
+  const nSheets = items.filter((it) => !it.noImage).length;
+  const maxPx = o.quality === "high" && nSheets <= PRINT_HIGH_MAX_SHEETS ? PRINT_HIGH_PX : (nSheets > 6 ? SET_PRINT_MAXPX : PRINT_MAXPX);
 
   let landscape = true, first = true;
   const sections = [];
-  for (const g of groups) {
+  for (let i = 0; i < items.length; i++) {
+    if (signal.aborted) throw new Error("Cancelled.");
+    const it = items[i];
+    $("busyText").textContent = items.length > 1 ? `Preparing sheet ${i + 1} of ${items.length}…` : "Preparing the drawing…";
+    $("busyBar").style.width = (i / items.length) * 100 + "%";
+    await yieldUI();
     let imgHtml = "";
-    if (!g.noImage) {
-      const canvas = await buildOverview(SET_PRINT_MAXPX, g.pa, g.pb);
+    if (!it.noImage) {
+      const canvas = await buildOverview(maxPx, it.pa, it.pb, { mode: o.style, marks: o.marks, pins: o.notes });
       if (first) { landscape = canvas.width >= canvas.height; first = false; }
       const u = URL.createObjectURL(await canvasBlob(canvas));
       canvas.width = canvas.height = 0;
       urls.push(u);
-      imgHtml = `<img class="ps-img" src="${u}" alt="">`;
+      imgHtml = u;
     }
     const rows = [];
-    for (const n of g.list) {
+    for (const n of it.list) {
+      if (signal.aborted) throw new Error("Cancelled.");
       const [ua, ub] = await cropUrls(n, urls);
-      rows.push(noteRowHtml(n, notes.indexOf(n), ua, ub, g.noImage));
+      rows.push(noteRowHtml(n, notes.indexOf(n), ua, ub, !!it.noImage));
     }
-    sections.push(`<section class="ps-sec">
-      <div class="ps-head"><b>${esc(g.num)}</b>${g.title ? " — " + esc(g.title) : ""} <span>${esc(g.status)}</span></div>
-      ${imgHtml}
-      <table class="pn-table">${NOTE_HEAD}<tbody>${rows.join("")}</tbody></table>
-    </section>`);
+    const table = rows.length ? `<table class="pn-table">${NOTE_HEAD}<tbody>${rows.join("")}</tbody></table>` : "";
+    const head = sets
+      ? `<div class="ps-head"><b>${esc(it.num)}</b>${it.title ? " — " + esc(it.title) : ""} <span>${esc(it.status)}${it.pa ? ` · A p.${it.pa}` : ""}${it.pb ? ` · B p.${it.pb}` : ""}</span></div>`
+      : "";
+    sections.push(`<section class="ps-sec">${head}${imgHtml ? `<img class="ps-img${table ? "" : " ps-full"}" src="${imgHtml}" alt="">` : ""}${table}</section>`);
   }
 
-  const sumRows = setS.pairs.map((p) => `<tr>
-    <td class="pn-n">${esc(p.num)}</td><td class="pn-text">${esc(p.title)}</td>
-    <td class="pn-cat">${esc(STATUS_TEXT[statusOf(p)])}</td>
-    <td class="pn-n">${p.a ? "p." + p.a : "–"}</td><td class="pn-n">${p.b ? "p." + p.b : "–"}</td>
-    <td class="pn-n">${notesOnPair(p)}</td></tr>`).join("");
-
+  // header: what is being compared, and what the colors mean
   const printed = new Date().toLocaleDateString();
-  const modeText = view.mode === "overlay"
-    ? colors.overlayText("A", "B")
-    : "Slider: A is left of the line, B is right of it";
   const by = $("preparedBy").value.trim();
+  const col = colors.get();
+  const key = o.style === "overlay"
+    ? `<span class="ph-key"><i style="background:${esc(col.a)}"></i>Only in A (older)<i style="background:${esc(col.b)}"></i>Only in B (newer)<i style="background:#222"></i>In both</span>`
+    : "Split view: A (older) is left of the line, B (newer) is right of it";
+  const names = sets
+    ? `Set A (before): ${esc(slots.A.doc.name)} · ${slots.A.doc.numPages} sheets · Set B (after): ${esc(slots.B.doc.name)} · ${slots.B.doc.numPages} sheets`
+    : `A (before): ${esc(slots.A.doc.name)} · B (after): ${esc(slots.B.doc.name)}`;
   $("printHead").innerHTML =
     `<div class="ph-title"><b>${esc(titleOrDefault())}</b></div>` +
-    `<div class="ph-sub">Set A (before): ${esc(slots.A.doc.name)} · ${slots.A.doc.numPages} sheets · Set B (after): ${esc(slots.B.doc.name)} · ${slots.B.doc.numPages} sheets</div>` +
-    `<div class="ph-sub">${esc(modeText)} · ${by ? "Prepared by " + esc(by) + " · " : ""}Printed ${esc(printed)}</div>`;
-  $("printNotes").innerHTML =
-    `<div class="pn-title">Sheets (${setS.pairs.length})</div>
-     <table class="pn-table ps-sum"><thead><tr><th>Sheet</th><th>Title</th><th>Status</th><th>Set A</th><th>Set B</th><th>Notes</th></tr></thead><tbody>${sumRows}</tbody></table>
-     <div class="pn-foot">Change flags compare a reduced picture of each sheet and are a guide, not proof. ${esc(ZONE_NOTE)}</div>
-     ${sections.join("")}`;
+    `<div class="ph-sub">${names}</div>` +
+    `<div class="ph-sub">${key}${by ? " · Prepared by " + esc(by) : ""} · Printed ${esc(printed)}</div>`;
+
+  // more than one sheet: an index of what is in the print
+  let index = "";
+  if (sets && items.filter((it) => !it.noImage).length > 1) {
+    const rowsHtml = items.filter((it) => !it.noImage).map((it) => `<tr>
+      <td class="pn-n">${esc(it.num)}</td><td class="pn-text">${esc(it.title)}</td><td class="pn-cat">${esc(it.status)}</td>
+      <td class="pn-n">${it.pa ? "p." + it.pa : "–"}</td><td class="pn-n">${it.pb ? "p." + it.pb : "–"}</td></tr>`).join("");
+    index = `<div class="pn-title">Sheets in this print (${items.filter((it) => !it.noImage).length})</div>
+      <table class="pn-table ps-sum"><thead><tr><th>Sheet</th><th>Title</th><th>Status</th><th>Set A</th><th>Set B</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      <div class="pn-foot">Change flags compare a reduced picture of each sheet and are a guide, not proof. ${esc(ZONE_NOTE)}</div>`;
+  } else if (o.notes && items.some((it) => it.list.length)) {
+    index = `<div class="pn-foot">${esc(ZONE_NOTE)}</div>`;
+  }
+  $("printNotes").innerHTML = index + sections.join("");
   setPageStyle(landscape);
 }
-
-$("printBtn").addEventListener("click", doPrint);
+$("printBtn").addEventListener("click", openPrintDlg);
 window.addEventListener("afterprint", () => {
   setTimeout(() => {
     printUrls.forEach((u) => URL.revokeObjectURL(u));

@@ -16,6 +16,8 @@ const MAX_HEADER = 2 * MB;                // sanity limit for the notes/header b
 const MAX_IMPORT_FILE = 200 * MB;         // sanity limit for a drawing inside an export
 const MAX_NOTES = 500;
 const MAX_PAIRS = 1000;
+const MAX_MARKS = 400;
+const MAX_MARK_POINTS = 600;
 const CATS = ["Changed", "Added", "Removed", "Question", "Other"];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -223,6 +225,31 @@ function cleanView(v) {
   };
 }
 
+// Highlights drawn on a sheet (box, circle or freehand marker), in positions 0..1 of the drawing.
+export function cleanMarks(list) {
+  const r4 = (v) => Math.round(v * 10000) / 10000;
+  return (Array.isArray(list) ? list : []).slice(0, MAX_MARKS).map((m) => {
+    if (!m || typeof m !== "object" || !["rect", "ellipse", "free"].includes(m.shape)) return null;
+    const pa = parseInt(m.pa, 10), pb = parseInt(m.pb, 10);
+    const base = {
+      id: String(m.id || Math.random().toString(36).slice(2, 10)).slice(0, 40),
+      pa: Number.isInteger(pa) && pa >= 0 ? Math.min(pa, 9999) : 1,
+      pb: Number.isInteger(pb) && pb >= 0 ? Math.min(pb, 9999) : 1,
+      shape: m.shape,
+      color: /^#[0-9a-fA-F]{6}$/.test(String(m.color)) ? String(m.color).toLowerCase() : "#ffd400",
+      t: Number.isFinite(Number(m.t)) ? Number(m.t) : Date.now(),
+    };
+    if (m.shape === "free") {
+      const pts = (Array.isArray(m.pts) ? m.pts : []).slice(0, MAX_MARK_POINTS).map((v) => r4(clamp(Number(v) || 0, 0, 1)));
+      if (pts.length % 2) pts.pop();
+      return pts.length >= 4 ? { ...base, pts } : null;
+    }
+    const x = clamp(Number(m.x) || 0, 0, 1), y = clamp(Number(m.y) || 0, 0, 1);
+    const w = clamp(Number(m.w) || 0, 0, 1 - x), h = clamp(Number(m.h) || 0, 0, 1 - y);
+    return w >= 0.002 && h >= 0.002 ? { ...base, x: r4(x), y: r4(y), w: r4(w), h: r4(h) } : null;
+  }).filter(Boolean);
+}
+
 // Whole-set comparisons: which page of set A goes with which page of set B.
 export function cleanSets(s) {
   if (!s || typeof s !== "object" || !s.on) return { on: false };
@@ -263,6 +290,7 @@ export function buildExport({ A, B, state }) {
     notes: cleanNotes(state.notes), view: cleanView(state.view),
     pages: { A: (state.pages && state.pages.A) || 1, B: (state.pages && state.pages.B) || 1 },
     sets: cleanSets(state.sets),
+    marks: cleanMarks(state.marks),
     files: {
       A: { name: A.name, size: A.size, type: A.type },
       B: { name: B.name, size: B.size, type: B.type },
@@ -312,6 +340,7 @@ export async function parseExport(file) {
       view: cleanView(h.view),
       pages: { A: Number.isInteger(pa) && pa > 0 ? pa : 1, B: Number.isInteger(pb) && pb > 0 ? pb : 1 },
       sets: cleanSets(h.sets),
+      marks: cleanMarks(h.marks),
     },
   };
 }

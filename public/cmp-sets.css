@@ -83,3 +83,45 @@
 @media print and (orientation: portrait) {
   .ps-img { max-height: 170mm; }
 }
+
+/* ==================================================================
+   Highlights and the Print options dialog
+   ================================================================== */
+
+/* ---- highlights drawn on the sheet ------------------------------ */
+.hl-layer { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; overflow: visible; mix-blend-mode: multiply; }
+.hl-layer .hl { fill: var(--c); fill-opacity: .3; stroke: var(--c); stroke-width: calc(2.5px * var(--inv, 1)); }
+.hl-layer .hl-free { fill: none; stroke-opacity: .45; stroke-width: calc(16px * var(--inv, 1)); stroke-linecap: round; stroke-linejoin: round; }
+.hl-layer .hl.sel { stroke-width: calc(4px * var(--inv, 1)); stroke-dasharray: calc(8px * var(--inv, 1)) calc(5px * var(--inv, 1)); }
+.hl-layer .hl-free.sel { stroke-dasharray: none; stroke-opacity: .75; }
+.hl-layer .hl-draft { fill-opacity: .18; }
+.canvas.highlighting { cursor: crosshair; }
+
+.hl-colors { display: inline-flex; align-items: center; gap: 2px; margin: 0 4px; }
+.hl-dot { position: relative; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.hl-dot::before { content: ""; position: absolute; inset: 6px; border-radius: 50%; background: var(--c);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.35); }
+.hl-dot::after { content: ""; position: absolute; inset: -6px; }               /* 44 px touch target */
+.hl-dot.on::before { box-shadow: 0 0 0 2px var(--color-bg, #0d0f1a), 0 0 0 4px #fff; }
+
+/* ---- Print options ---------------------------------------------- */
+.pd-opt, .pd-chk { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 8px 4px; cursor: pointer;
+  font-size: 14px; color: var(--color-neutral-200); -webkit-tap-highlight-color: transparent; }
+.pd-opt input, .pd-chk input { flex: none; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--color-accent); }
+.pd-opt small { display: block; margin-top: 2px; font-size: 12px; color: var(--color-neutral-500); }
+.pd-opt.off { opacity: .45; cursor: default; }
+#printDlg .field-lbl { margin-top: 12px; }
+#printDlg .field-lbl:first-child { margin-top: 0; }
+
+/* ---- print: drawings fill the page unless a notes list shares it ---- */
+@media print {
+  .ps-sec:first-child { break-before: auto; page-break-before: auto; }
+  .ps-img.ps-full { max-height: 182mm; }
+  .ph-key { display: inline-block; margin-top: 1mm; font-size: 9.5pt; color: #333; }
+  .ph-key i { display: inline-block; width: 3.2mm; height: 3.2mm; margin: 0 1mm 0 3mm; vertical-align: -0.5mm; border: 0.2mm solid #888; }
+  .ph-key i:first-child { margin-left: 0; }
+}
+@media print and (orientation: portrait) {
+  .ps-img.ps-full { max-height: 255mm; }
+}
