@@ -62,7 +62,7 @@ const fmtWhen = (ms) => {
 
 // compare.html and this script are updated together. If the page on the site is older than the script,
 // say exactly that instead of failing silently.
-const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "hlBanner", "hlBtn", "hlClear", "hlColors", "hlDelete", "hlGroup", "hlLayer", "hlShapes", "hlUndo", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pdAll", "pdCancel", "pdChanged", "pdGo", "pdHighNote", "pdMarked", "pdMarks", "pdNotes", "pdScopeWrap", "pdThis", "pins", "preparedBy", "printArea", "printBtn", "printDlg", "printDlgSub", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "savedSection", "setsPanel", "setsToggle", "setsToggleLabel", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
+const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "hlBanner", "hlBtn", "hlClear", "hlColors", "hlDelete", "hlGroup", "hlLayer", "hlShapes", "hlUndo", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pdAll", "pdCancel", "pdChanged", "pdGo", "pdHighNote", "pdMarked", "pdMarks", "pdNotes", "pdScopeWrap", "pdThis", "pins", "preparedBy", "printArea", "printBtn", "printDlg", "printDlgSub", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "savedSection", "setsPanel", "setsToggle", "setsToggleLabel", "sharpHint", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
 const missingIds = REQUIRED_IDS.filter((id) => !document.getElementById(id));
 if (missingIds.length) {
   const bar = document.createElement("div");
@@ -89,7 +89,8 @@ colors.bindButton($("colorBtn"));
 /* ---------- limits (conservative for iPad Safari canvas memory) ---------- */
 const MIN_Z = 0.4, MAX_Z = 12;
 const BASE_MAX_PX = 4e6;               // sheet bitmap cap: keeps sheets quick to draw and turn (zooming re-renders sharply)
-const DETAIL_MAX_PX = 9e6;
+const DETAIL_MAX_PX = 8e6;
+const DETAIL_PAD = 0.14;                // how much beyond the screen is drawn sharply, so small pans need no redraw
 const PRINT_MAXPX = 8e6;
 const SET_PRINT_MAXPX = 5e6;             // per-sheet picture when printing many sheets (Standard quality)
 const PRINT_HIGH_PX = 14e6;              // per-sheet picture at High quality (kept under the 16.7 million pixel limit of iPad Safari canvases)
@@ -103,7 +104,11 @@ const CHG_MIN_PX = 45;                   // fewer different pixels than this = "
 const SHEET_RE = /^[A-Z]{1,3}[-. ]?\d{1,3}(?:\.\d{1,3})?[A-Z]?$/;   // E-101, E101, ES-001, E-101.1, E-101A
 const TB_REGION = { br: [0.72, 0.72], right: [0.82, 0], none: [2, 2] };   // [left edge, top edge] left out of the check
 const LOOK_PX = 220, LOOK_GX = 32, LOOK_GY = 24, LOOK_MIN = 0.45;   // matching sheets by how they look, when numbers can't be read
-const CACHE_MAX = 8;                     // finished sheet bitmaps kept so turning back and forth is instant
+const CACHE_MAX = 6;                     // finished sheet bitmaps kept so turning back and forth is instant (the next sheet, the previous one, and the one just left)
+const CACHE_ITEM_MAX_PX = 5e6;           // bigger bitmaps are not kept
+const IDLE_MS = 1200;                    // the sharper version of a sheet and the change check wait until the drawing has been left alone this long
+const PREFETCH_IDLE_MS = 350;            // neighbouring sheets are prepared sooner, so turning pages stays instant
+const UPGRADE_MAX_PX = 8e6;              // the one-time sharper version of the sheet on screen (drawn in idle time)
 
 /* ---------- state ---------- */
 const S = { z: 1, tx: 0, ty: 0, vw: 800, vh: 600, W0: 800, H0: 600 };
@@ -231,7 +236,7 @@ function makeLayer(canvas, cls, tintCls) {
   tint.className = `tint ${tintCls}`;
   el.appendChild(tint);
   return { el, canvas, tint, detail: null, page: null, pw: 0, ph: 0, box: null,
-           dens: 1, baseTask: null, detailTask: null, gen: 0, dgen: 0, pid: null, cacheKey: null, blank: false };
+           dens: 1, baseTask: null, detailTask: null, gen: 0, dgen: 0, pid: null, cacheKey: null, cachePid: null, detailInfo: null, blank: false };
 }
 const LB = makeLayer($("cvB"), "layer-b", "tint-b");   // Drawing B (newer) underneath
 const LA = makeLayer($("cvA"), "layer-a", "tint-a");   // Drawing A (older) on top, clipped / blended
@@ -264,7 +269,23 @@ function clampT() {
   S.tx = cw + 2 * m <= S.vw ? (S.vw - cw) / 2 : clamp(S.tx, S.vw - cw - m, m);
   S.ty = ch + 2 * m <= S.vh ? (S.vh - ch) / 2 : clamp(S.ty, S.vh - ch - m, m);
 }
+// Any use of the drawing (touch, mouse, wheel, buttons) counts as activity: background work steps aside at once.
+function touch() {
+  lastNav = performance.now();
+  if (bgTask) cancel(bgTask);
+}
+// "Sharpening…" shows if a redraw takes noticeably long (so a blurry moment isn't mistaken for a poor picture)
+let sharpCount = 0, sharpTimer = null;
+function sharpening(on) {
+  sharpCount = Math.max(0, sharpCount + (on ? 1 : -1));
+  const el = $("sharpHint");
+  if (sharpCount > 0) {
+    if (!sharpTimer && el.classList.contains("hidden")) sharpTimer = setTimeout(() => { sharpTimer = null; if (sharpCount > 0) el.classList.remove("hidden"); }, 400);
+  } else { clearTimeout(sharpTimer); sharpTimer = null; el.classList.add("hidden"); }
+}
+
 function applyTransform() {
+  touch();
   stage.style.transform = `translate(${S.tx}px, ${S.ty}px) scale(${S.z})`;
   stage.style.setProperty("--inv", String(1 / S.z));
   $("zoomLevel").textContent = Math.round(S.z * 100) + "%";
@@ -315,7 +336,7 @@ async function setLayer(L, doc, pageNum, like) {
 }
 
 function clearDetail(L) {
-  L.dgen++; cancel(L.detailTask); L.detailTask = null;
+  L.dgen++; cancel(L.detailTask); L.detailTask = null; L.detailInfo = null;
   if (L.detail) { L.detail.remove(); L.detail = null; }
 }
 
@@ -334,11 +355,39 @@ function newRaster(r) {
 function freeCanvas(c) { try { c.width = c.height = 0; } catch (e) { /* ignore */ } }
 function takeCache(key) { const c = baseCache.get(key); if (c) baseCache.delete(key); return c || null; }
 function putCache(key, c) {
+  if (c.width * c.height > CACHE_ITEM_MAX_PX) { freeCanvas(c); return; }
   if (baseCache.has(key)) { freeCanvas(baseCache.get(key)); baseCache.delete(key); }
   baseCache.set(key, c);
   while (baseCache.size > CACHE_MAX) { const k = baseCache.keys().next().value; freeCanvas(baseCache.get(k)); baseCache.delete(k); }
 }
 function clearCache() { baseCache.forEach(freeCanvas); baseCache.clear(); }
+
+function placeCss(c, b) {
+  c.style.left = b.x + "px"; c.style.top = b.y + "px";
+  c.style.width = b.w + "px"; c.style.height = b.h + "px";
+}
+// The sheet being replaced is kept (so turning back to it is instant). A big, sharper bitmap is kept as a normal-size copy.
+function cacheOld(L, old) {
+  if (!old || !old.dataset.keep) return;
+  if (!L.cacheKey || !old.width) { freeCanvas(old); return; }
+  if (old.width * old.height <= CACHE_ITEM_MAX_PX) { putCache(L.cacheKey, old); return; }
+  const r = rasterFor({ w: parseFloat(old.style.width), h: parseFloat(old.style.height) });
+  const copy = newRaster(r);
+  const x = copy.getContext("2d");
+  x.imageSmoothingQuality = "high";
+  x.drawImage(old, 0, 0, r.w, r.h);
+  freeCanvas(old);
+  putCache(rasterKey(L.cachePid, r), copy);
+}
+function installBase(L, c, key, b, dropOld = false) {
+  placeCss(c, b);
+  L.dens = c.width / b.w;
+  const old = L.canvas;
+  L.el.replaceChild(c, old);              // swap in only when finished, so there's no blank flash
+  if (dropOld) { if (old && old.dataset.keep) freeCanvas(old); }   // same sheet, now sharper: the old version is not needed
+  else cacheOld(L, old);
+  L.canvas = c; L.cacheKey = key; L.cachePid = L.pid;
+}
 
 async function renderBase(L) {
   if (!L.page) return;
@@ -348,22 +397,12 @@ async function renderBase(L) {
   const b = boxFor(L); L.box = b;
   const r = rasterFor(b);
   const key = L.pid ? rasterKey(L.pid, r) : null;
-  const place = (c) => {
-    c.style.left = b.x + "px"; c.style.top = b.y + "px";
-    c.style.width = b.w + "px"; c.style.height = b.h + "px";
-    L.dens = c.width / b.w;
-  };
-  // already showing exactly this sheet at this size: nothing to draw
-  if (key && L.cacheKey === key && L.canvas && L.canvas.dataset.keep && L.canvas.width) { place(L.canvas); return; }
-  const finish = (c) => {
-    place(c);
-    const old = L.canvas;
-    L.el.replaceChild(c, old);              // swap in only when finished, so there's no blank flash
-    if (old && old.dataset.keep) { if (L.cacheKey && old.width) putCache(L.cacheKey, old); else freeCanvas(old); }
-    L.canvas = c; L.cacheKey = key;
-  };
+  // already showing this sheet at this size or sharper (e.g. the sharper version drawn in idle time): nothing to draw
+  if (L.pid && L.cachePid === L.pid && L.canvas && L.canvas.dataset.keep && L.canvas.width >= r.w * 0.98) {
+    placeCss(L.canvas, b); L.dens = L.canvas.width / b.w; return;
+  }
   const hit = key ? takeCache(key) : null;   // a sheet prepared earlier appears instantly
-  if (hit) { finish(hit); return; }
+  if (hit) { installBase(L, hit, key, b); return; }
   const c = newRaster(r);
   const task = renderFit(L.page, c);
   L.baseTask = task;
@@ -371,34 +410,40 @@ async function renderBase(L) {
   catch (e) { freeCanvas(c); if (my !== L.gen || e?.name === "RenderingCancelledException") return; throw e; }
   if (my !== L.gen) { freeCanvas(c); return; }
   L.baseTask = null;
-  finish(c);
+  installBase(L, c, key, b);
 }
 
 let detailTimer = null;
-function scheduleDetail(delay = 170) {
+function scheduleDetail(delay = 110) {
   clearTimeout(detailTimer);
   detailTimer = setTimeout(() => { renderDetail(LB); renderDetail(LA); }, delay);
 }
 
-// Re-renders just the visible region at full screen resolution so zoomed-in text stays sharp.
+// Draws just the part of the sheet that is on screen at full sharpness, when zoomed in beyond what the sheet's
+// bitmap can show. Does nothing if what is already drawn is sharp enough and covers the screen.
 async function renderDetail(L) {
   if (!L.page || !L.box) return;
   const k = S.z * dpr();
   if (k <= L.dens * 1.1) { clearDetail(L); return; }
-  const my = ++L.dgen;
-  cancel(L.detailTask);
-  const b = L.box, pad = 0.1;
+  const b = L.box;
   const vx0 = -S.tx / S.z, vy0 = -S.ty / S.z;
   const vx1 = (S.vw - S.tx) / S.z, vy1 = (S.vh - S.ty) / S.z;
+  const vis = { x0: Math.max(b.x, vx0), y0: Math.max(b.y, vy0), x1: Math.min(b.x + b.w, vx1), y1: Math.min(b.y + b.h, vy1) };
+  if (vis.x1 - vis.x0 < 2 || vis.y1 - vis.y0 < 2) { clearDetail(L); return; }          // this sheet is off screen
+  // the area that would be drawn (the screen plus a margin) and the sharpness it can have within the bitmap size limit
   const w0 = vx1 - vx0, h0 = vy1 - vy0;
-  const x0 = Math.max(b.x, vx0 - w0 * pad), y0 = Math.max(b.y, vy0 - h0 * pad);
-  const x1 = Math.min(b.x + b.w, vx1 + w0 * pad), y1 = Math.min(b.y + b.h, vy1 + h0 * pad);
+  const x0 = Math.max(b.x, vx0 - w0 * DETAIL_PAD), y0 = Math.max(b.y, vy0 - h0 * DETAIL_PAD);
+  const x1 = Math.min(b.x + b.w, vx1 + w0 * DETAIL_PAD), y1 = Math.min(b.y + b.h, vy1 + h0 * DETAIL_PAD);
   const rw = x1 - x0, rh = y1 - y0;
-  if (rw < 2 || rh < 2) { clearDetail(L); return; }
   let kk = k;
   const area = rw * kk * rh * kk;
   if (area > DETAIL_MAX_PX) kk *= Math.sqrt(DETAIL_MAX_PX / area);
   if (kk <= L.dens * 1.05) { clearDetail(L); return; }
+  // what is already drawn is as sharp as this would be and covers the screen: keep it, draw nothing
+  const di = L.detailInfo;
+  if (L.detail && di && di.ke >= kk * 0.92 && di.x0 <= vis.x0 + 0.5 && di.y0 <= vis.y0 + 0.5 && di.x1 >= vis.x1 - 0.5 && di.y1 >= vis.y1 - 0.5) return;
+  const my = ++L.dgen;
+  cancel(L.detailTask);
   const d = document.createElement("canvas");
   d.width = Math.max(1, Math.round(rw * kk));
   d.height = Math.max(1, Math.round(rh * kk));
@@ -410,15 +455,18 @@ async function renderDetail(L) {
     offsetX: -(x0 - b.x) * ke,
     offsetY: -(y0 - b.y) * ke,
   });
+  sharpening(true);
   const task = L.page.render({ canvasContext: d.getContext("2d"), viewport: vp });
   L.detailTask = task;
   try { await task.promise; }
-  catch (e) { return; }
-  if (my !== L.dgen) return;
+  catch (e) { sharpening(false); freeCanvas(d); return; }
+  sharpening(false);
+  if (my !== L.dgen) { freeCanvas(d); return; }
   L.detailTask = null;
   L.el.insertBefore(d, L.tint);
   if (L.detail) L.detail.remove();
   L.detail = d;
+  L.detailInfo = { x0, y0, x1, y1, ke };
 }
 
 /* ---------- mounting both drawings ---------- */
@@ -429,7 +477,7 @@ async function mountBoth(keep) {
   mountBusy = true; lastNav = performance.now();
   try { await mountInner(my, keep); }
   finally { if (my === mountSeq) { mountBusy = false; lastNav = performance.now(); } }
-  if (my === mountSeq && setS.on && cpOn) background();
+  if (my === mountSeq && cpOn) background();
 }
 
 async function mountInner(my, keep) {
@@ -894,6 +942,16 @@ function dilate(src, w, h) {
 }
 
 // How many pixels of line work differ between two sheets, once the title block is left out.
+// Background drawing that gives way the moment the person touches the drawing.
+function interruptedError() { const e = new Error("interrupted"); e.interrupted = true; return e; }
+async function bgRender(page, canvas) {
+  const task = renderFit(page, canvas);
+  bgTask = task;
+  try { await task.promise; }
+  catch (e) { if (e && e.name === "RenderingCancelledException") throw interruptedError(); throw e; }
+  finally { if (bgTask === task) bgTask = null; }
+}
+
 async function measureChange(pa, pb) {
   const [pageA, pageB] = await Promise.all([slots.A.doc.getPage(pa), slots.B.doc.getPage(pb)]);
   const vB = pageB.getViewport({ scale: 1 });
@@ -902,12 +960,12 @@ async function measureChange(pa, pb) {
   const ink = async (page) => {
     const c = document.createElement("canvas");
     c.width = w; c.height = h;
-    const x = c.getContext("2d", { willReadFrequently: true });
-    x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
-    await renderFit(page, c).promise;
-    const map = inkMap(x.getImageData(0, 0, w, h).data, w, h);
-    c.width = c.height = 0;
-    return map;
+    try {
+      const x = c.getContext("2d", { willReadFrequently: true });
+      x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
+      await bgRender(page, c);
+      return inkMap(x.getImageData(0, 0, w, h).data, w, h);
+    } finally { c.width = c.height = 0; }
   };
   const inkA = await ink(pageA);
   await yieldUI();
@@ -927,11 +985,11 @@ async function measureChange(pa, pb) {
   return diff;
 }
 
-// Waits until nothing is being turned or drawn, so background work never slows down a page turn.
-async function settle(my) {
+// Waits until the drawing has been left alone for a while, so background work never slows down turning, zooming or panning.
+async function settle(my, idle = IDLE_MS) {
   while (my === bgRun) {
-    if (!mountBusy && performance.now() - lastNav > 350) return true;
-    await new Promise((r) => setTimeout(r, 120));
+    if (!mountBusy && performance.now() - lastNav > idle) return true;
+    await new Promise((r) => setTimeout(r, 150));
   }
   return false;
 }
@@ -948,6 +1006,26 @@ async function layoutFor(pa, pb) {
   return { pageA, pageB, boxB: { x: 0, y: 0, w: W0, h: H0 }, boxA: { x: (W0 - wa) / 2, y: (H0 - ha) / 2, w: wa, h: ha } };
 }
 
+// Once the sheet has been left alone for a moment, draw a sharper version of it, so ordinary zooming needs no redraw.
+async function upgradeBase(my) {
+  const seq = mountSeq;
+  for (const L of [LB, LA]) {
+    if (my !== bgRun) return true;
+    if (!L.page || L.blank || !L.pid || !L.box) continue;
+    const b = L.box;
+    const dens = Math.min(2 * dpr(), Math.sqrt(UPGRADE_MAX_PX / (b.w * b.h)), 6);
+    if (dens < L.dens * 1.3) continue;                                  // already sharp enough for zooming
+    const w = Math.round(b.w * dens), h = Math.round(b.h * dens);
+    const c = newRaster({ w, h });
+    try { await bgRender(L.page, c); }
+    catch (e) { freeCanvas(c); if (e && e.interrupted) return my !== bgRun; throw e; }
+    if (my !== bgRun || seq !== mountSeq) { freeCanvas(c); return true; }
+    installBase(L, c, rasterKey(L.pid, { w, h }), b, true);
+    scheduleDetail(0);                                                  // let go of a sharp patch that is no longer needed
+  }
+  return true;
+}
+
 // Draws the next and previous sheet pairs ahead of time, so turning to them is instant.
 async function prefetchNeighbors(my) {
   for (const d of [1, -1]) {
@@ -956,20 +1034,20 @@ async function prefetchNeighbors(my) {
     let lay;
     try { lay = await layoutFor(p.a, p.b); } catch (e) { continue; }
     for (const [num, page, box, which] of [[p.b, lay.pageB, lay.boxB, "B"], [p.a, lay.pageA, lay.boxA, "A"]]) {
-      if (my !== bgRun) return;
+      if (my !== bgRun) return true;
       if (!num) continue;
       const r = rasterFor(box);
       const key = rasterKey(`${slots[which].doc.fp}#${num}`, r);
       if (baseCache.has(key)) continue;
       const c = newRaster(r);
-      bgTask = renderFit(page, c);
-      try { await bgTask.promise; }
-      catch (e) { freeCanvas(c); if (my !== bgRun) return; continue; }
-      if (my !== bgRun) { freeCanvas(c); return; }
+      try { await bgRender(page, c); }
+      catch (e) { freeCanvas(c); if (e && e.interrupted) return my !== bgRun; continue; }
+      if (my !== bgRun) { freeCanvas(c); return true; }
       putCache(key, c);
       await yieldUI();
     }
   }
+  return true;
 }
 
 async function analyzePending(my) {
@@ -977,29 +1055,44 @@ async function analyzePending(my) {
   setS.total = todo.length; setS.done = 0;
   paintProgress();
   for (const p of todo) {
-    if (my !== bgRun || !cpOn || !setS.on) return;
-    try { p.chg = await measureChange(p.a, p.b); }
-    catch (e) { p.chg = -1; }
+    for (let tries = 0; ; tries++) {
+      if (my !== bgRun || !cpOn || !setS.on) return true;
+      if (!(await settle(my))) return true;
+      try { p.chg = await measureChange(p.a, p.b); break; }
+      catch (e) {
+        if (e && e.interrupted && tries < 40) continue;                  // the person touched the drawing: try again when they stop
+        p.chg = -1; break;
+      }
+    }
     setS.done++;
     scheduleSetsList();
     paintProgress();
     await yieldUI();
-    if (!(await settle(my))) return;
   }
-  if (my !== bgRun) return;
+  if (my !== bgRun) return true;
   setS.total = 0; setS.done = 0;
   paintProgress(); renderSets(); renderPairNav();
   if (todo.length) changed();
+  return true;
 }
 
-// Quiet work after a sheet is on screen: get the neighbours ready first, then check sheets for changes.
+// One quiet step at a time, each waiting for the drawing to be left alone and giving way when it is touched.
+async function runStep(my, fn, idle = IDLE_MS) {
+  for (let i = 0; i < 60 && my === bgRun; i++) {
+    if (!(await settle(my, idle))) return;
+    let done = true;
+    try { done = await fn(); } catch (e) { return; }
+    if (done !== false) return;
+  }
+}
+
+// Quiet work after a sheet is on screen: the neighbouring sheets, then a sharper version of this one, then the change check.
 async function background() {
-  if (!setS.on || !cpOn) return;
+  if (!cpOn) return;
   const my = ++bgRun;
-  if (!(await settle(my))) return;
-  try { await prefetchNeighbors(my); } catch (e) { /* not critical */ }
-  if (my !== bgRun) return;
-  await analyzePending(my);
+  await runStep(my, () => prefetchNeighbors(my), PREFETCH_IDLE_MS);
+  await runStep(my, () => upgradeBase(my));
+  await runStep(my, () => analyzePending(my));
 }
 
 /* ---------- sheets panel ---------- */
@@ -1793,6 +1886,7 @@ document.addEventListener("keydown", (e) => {
  * ------------------------------------------------------------------ */
 let draggingDivider = false;
 function moveDivider(e) {
+  touch();
   const r = viewport.getBoundingClientRect();
   view.p = clamp((e.clientX - r.left - S.tx) / S.z / S.W0, 0, 1);
   applySlider();
