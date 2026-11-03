@@ -358,6 +358,23 @@
         <div class="field-lbl">How it looks</div>
         <label class="pd-opt"><input type="radio" name="pdStyle" value="overlay"><span>Overlay in colors <small>Older sheet in one color, newer in another, dark where they agree</small></span></label>
         <label class="pd-opt"><input type="radio" name="pdStyle" value="slider"><span>Split view <small>Older on the left of the line, newer on the right</small></span></label>
+        <div class="field-lbl">Output</div>
+        <label class="pd-opt"><input type="radio" name="pdOut" value="pdf"><span>Save as a PDF at a paper size <small>Exact paper size, sharp at any size. Print it at 100% from Bluebeam or any PDF viewer.</small></span></label>
+        <label class="pd-opt"><input type="radio" name="pdOut" value="browser"><span>Print from the browser <small>Best for Letter and Tabloid. You choose the paper in the print window.</small></span></label>
+        <div id="pdPdfOpts">
+          <label class="field-lbl" for="pdPaper">Paper size</label>
+          <select class="input" id="pdPaper">
+            <option value="arche">Arch E (36 × 48 in)</option>
+            <option value="arche1">Arch E1 (30 × 42 in)</option>
+            <option value="ansie">ANSI E (34 × 44 in)</option>
+            <option value="archd">Arch D (24 × 36 in)</option>
+            <option value="ansid">ANSI D (22 × 34 in)</option>
+            <option value="archc">Arch C (18 × 24 in)</option>
+            <option value="tabloid">Tabloid (11 × 17 in)</option>
+            <option value="letter">Letter (8.5 × 11 in)</option>
+          </select>
+          <label class="pd-chk"><input type="checkbox" id="pdFit" checked><span>Fit the drawing to the paper <small>Off: actual size (a sheet is never enlarged, only shrunk if it doesn't fit)</small></span></label>
+        </div>
         <div id="pdQualityWrap">
           <div class="field-lbl">Print quality</div>
           <label class="pd-opt"><input type="radio" name="pdQuality" value="high" checked><span>High <small id="pdHighNote">Sharpest. Best for large prints.</small></span></label>
@@ -369,7 +386,7 @@
       <div class="m-actions">
         <div class="spacer"></div>
         <button class="btn btn-secondary" id="pdCancel" style="min-height:40px">Cancel</button>
-        <button class="btn btn-primary" id="pdGo" style="min-height:40px"><i class="ph ph-printer"></i>Print</button>
+        <button class="btn btn-primary" id="pdGo" style="min-height:40px"><i class="ph ph-printer"></i><span id="pdGoLabel">Print</span></button>
       </div>
     </div>
   </div>

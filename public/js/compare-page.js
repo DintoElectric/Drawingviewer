@@ -62,7 +62,7 @@ const fmtWhen = (ms) => {
 
 // compare.html and this script are updated together. If the page on the site is older than the script,
 // say exactly that instead of failing silently.
-const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "hlBanner", "hlBtn", "hlClear", "hlColors", "hlDelete", "hlGroup", "hlLayer", "hlShapes", "hlUndo", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pdAll", "pdCancel", "pdChanged", "pdGo", "pdHighNote", "pdMarked", "pdMarks", "pdNotes", "pdScopeWrap", "pdThis", "pins", "preparedBy", "printArea", "printBtn", "printDlg", "printDlgSub", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "savedSection", "setsPanel", "setsToggle", "setsToggleLabel", "sharpHint", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
+const REQUIRED_IDS = ["busy", "busyBar", "busyCancel", "busyText", "busyTitle", "clearNotes", "colorBtn", "cpApp", "cvA", "cvB", "divider", "docTitle", "dzA", "dzB", "dzNameA", "dzNameB", "empty", "exExcel", "exFile", "exWord", "exportBtn", "exportMenu", "fileA", "fileB", "fileImport", "fitBtn", "fullCancel", "fullDlg", "fullList", "fullRetry", "fullSub", "hlBanner", "hlBtn", "hlClear", "hlColors", "hlDelete", "hlGroup", "hlLayer", "hlShapes", "hlUndo", "lblA", "lblB", "legend", "modeOverlay", "modeSlider", "nameA", "nameB", "newBtn", "nextChanged", "noteBanner", "noteBtn", "noteCancel", "noteCat", "noteDelete", "noteDlg", "noteDlgSub", "noteDlgTitle", "noteEmpty", "noteList", "noteSave", "noteText", "notesPanel", "notesToggle", "notesToggleLabel", "opacity", "opacityWrap", "pageIndA", "pageIndB", "pageNextA", "pageNextB", "pagePrevA", "pagePrevB", "pageTitle", "pagesA", "pagesB", "pairGroup", "pairInd", "pairNext", "pairPrev", "pairRule", "pdAll", "pdCancel", "pdChanged", "pdFit", "pdGo", "pdGoLabel", "pdHighNote", "pdMarked", "pdMarks", "pdNotes", "pdPaper", "pdPdfOpts", "pdQualityWrap", "pdScopeWrap", "pdThis", "pins", "preparedBy", "printArea", "printBtn", "printDlg", "printDlgSub", "printHead", "printImg", "printNotes", "renameCancel", "renameDlg", "renameInput", "renameSave", "replaceA", "replaceB", "saveBtn", "saveBtnLabel", "saveStatus", "savedList", "savedMeta", "savedMsg", "savedSection", "setsPanel", "setsToggle", "setsToggleLabel", "sharpHint", "spBar", "spFilter", "spList", "spMatch", "spNotice", "spPairA", "spPairB", "spProgText", "spProgress", "spSummary", "spTb", "stage", "startMsg", "startScreen", "swapBtn", "viewport", "zoomIn", "zoomLevel", "zoomOut"];
 const missingIds = REQUIRED_IDS.filter((id) => !document.getElementById(id));
 if (missingIds.length) {
   const bar = document.createElement("div");
@@ -2591,6 +2591,24 @@ function printCurrent() {
   return p || { a: slots.A.page, b: slots.B.page, num: "Current view", title: "", adhoc: true };
 }
 
+const PRINT_PREF_KEY = "dh-print-prefs";
+function loadPrintPrefs() {
+  const d = { out: "pdf", paper: "arche", fit: true };
+  try { return { ...d, ...JSON.parse(localStorage.getItem(PRINT_PREF_KEY) || "{}") }; } catch (e) { return d; }
+}
+function savePrintPrefs(o) {
+  try { localStorage.setItem(PRINT_PREF_KEY, JSON.stringify({ out: o.out, paper: o.paper, fit: o.fit })); } catch (e) { /* not critical */ }
+}
+// The PDF choices only apply to "Save as a PDF"; High/Standard quality only to "Print from the browser".
+function syncOut() {
+  const pdf = (document.querySelector("input[name=pdOut]:checked") || {}).value === "pdf";
+  $("pdPdfOpts").classList.toggle("hidden", !pdf);
+  $("pdQualityWrap").classList.toggle("hidden", pdf);
+  $("pdGoLabel").textContent = pdf ? "Save PDF" : "Print";
+  $("pdGo").querySelector("i").className = pdf ? "ph ph-file-pdf" : "ph ph-printer";
+}
+document.querySelectorAll("input[name=pdOut]").forEach((r) => r.addEventListener("change", syncOut));
+
 function openPrintDlg() {
   if (!cpOn) return;
   const sets = setS.on;
@@ -2618,6 +2636,11 @@ function openPrintDlg() {
   $("pdNotes").checked = true;
   document.querySelector("input[name=pdQuality][value=high]").checked = true;
   syncQuality();
+  const pref = loadPrintPrefs();
+  document.querySelector(`input[name=pdOut][value=${pref.out === "browser" ? "browser" : "pdf"}]`).checked = true;
+  $("pdPaper").value = [...$("pdPaper").options].some((o) => o.value === pref.paper) ? pref.paper : "arche";
+  $("pdFit").checked = pref.fit !== false;
+  syncOut();
   $("printDlg").classList.remove("hidden");
 }
 // High quality is for a few sheets at a time; more than that falls back to Standard.
@@ -2639,7 +2662,9 @@ $("printDlg").addEventListener("pointerdown", (e) => { if (e.target === $("print
 $("pdGo").addEventListener("click", () => {
   const val = (name) => (document.querySelector(`input[name=${name}]:checked`) || {}).value;
   const o = { scope: setS.on ? val("pdScope") || "this" : "this", style: val("pdStyle") === "slider" ? "slider" : "overlay",
-              quality: val("pdQuality") === "high" ? "high" : "standard", marks: $("pdMarks").checked, notes: $("pdNotes").checked };
+              quality: val("pdQuality") === "high" ? "high" : "standard", marks: $("pdMarks").checked, notes: $("pdNotes").checked,
+              out: val("pdOut") === "browser" ? "browser" : "pdf", paper: $("pdPaper").value, fit: $("pdFit").checked };
+  savePrintPrefs(o);
   closePrintDlg();
   doPrint(o);
 });
@@ -2667,6 +2692,7 @@ async function doPrint(o) {
   if (!cpOn) return;
   const items = printItems(o);
   if (!items.length) { flash("Nothing to print for that choice", ""); return; }
+  if (o.out === "pdf") { await doLargePdf(o, items); return; }
   const ctl = new AbortController();
   busyShow("Preparing your print…", "Starting…", ctl);
   const urls = [];
@@ -2681,6 +2707,44 @@ async function doPrint(o) {
     urls.forEach((u) => URL.revokeObjectURL(u));
     busyHide();
     if (e.message !== "Cancelled.") flash("Couldn't prepare the print", e.message);
+  }
+}
+
+// A PDF at an exact paper size (Arch E, ...), built from the original sheets as vector, so it is sharp at any size.
+const PAPER_FILE = { arche: "ArchE", arche1: "ArchE1", ansie: "ANSI-E", archd: "ArchD", ansid: "ANSI-D", archc: "ArchC", tabloid: "Tabloid", letter: "Letter" };
+async function doLargePdf(o, items) {
+  const ctl = new AbortController();
+  busyShow("Building your PDF…", "Starting…", ctl);
+  try {
+    $("busyText").textContent = "Loading the PDF tools…";
+    const mod = await import("./compare-pdf.js");
+    const job = {
+      paper: o.paper, fit: o.fit, style: o.style, colors: colors.get(), opacity: view.opacity, divider: view.p,
+      files: { A: slots.A.doc.file, B: slots.B.doc.file },
+      items: items.map((it) => ({
+        pa: it.pa, pb: it.pb, num: it.num, title: it.title, status: it.status, noImage: !!it.noImage,
+        marks: o.marks ? marks.filter((m) => m.pa === it.pa && m.pb === it.pb).map((m) => ({ ...m })) : [],
+        notes: o.notes ? it.list.map((n) => ({ n: notes.indexOf(n) + 1, x: n.x, y: n.y })) : [],
+      })),
+      notesList: o.notes ? items.flatMap((it) => it.list).map((n) => ({ n: notes.indexOf(n) + 1, cat: n.cat, text: n.text, zone: zoneOf(n.x, n.y), sheet: sheetOf(n) })) : [],
+      zoneNote: ZONE_NOTE,
+      header: { title: titleOrDefault(), aName: slots.A.doc.name, bName: slots.B.doc.name, setMode: setS.on, by: $("preparedBy").value.trim(), printed: new Date().toLocaleDateString() },
+    };
+    const res = await mod.buildLargeFormatPdf(job, (i, n, label) => {
+      $("busyText").textContent = n > 1 ? `Building sheet ${i + 1} of ${n}…` : "Building the drawing…";
+      $("busyBar").style.width = (i / Math.max(1, n)) * 100 + "%";
+    }, ctl.signal);
+    const sheetsDone = items.filter((it) => !it.noImage);
+    const base = sheetsDone.length === 1 && sheetsDone[0].num ? sheetsDone[0].num : (o.scope === "all" ? "all-sheets" : o.scope === "changed" ? "changed-sheets" : o.scope === "marked" ? "marked-sheets" : titleOrDefault());
+    const name = `${base}_${o.style}_${PAPER_FILE[o.paper] || o.paper}.pdf`.replace(/[^\w.\- ]+/g, "_").replace(/\s+/g, "_");
+    busyHide();
+    cloud.saveBlob(res.blob, name);
+    const pcts = res.scales.map((x) => x.percent);
+    const range = pcts.length ? (Math.min(...pcts) === Math.max(...pcts) ? `${pcts[0]}%` : `${Math.min(...pcts)}–${Math.max(...pcts)}%`) : "";
+    flash("PDF saved", `${res.pages} page${res.pages === 1 ? "" : "s"} at ${PAPER_FILE[o.paper] || o.paper}${range ? ", sheet scaled to " + range : ""}. Print it at 100% / Actual size.`);
+  } catch (e) {
+    busyHide();
+    if (e.message !== "Cancelled.") flash("Couldn't build the PDF", `${e.message} You can still use "Print from the browser".`);
   }
 }
 

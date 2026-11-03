@@ -131,3 +131,9 @@
   padding: 6px 12px; border-radius: 999px; background: rgba(35,37,50,.92); box-shadow: inset 0 0 0 1px var(--color-accent-700);
   color: var(--color-accent-100); font-size: 12px; }
 .sharp-hint i { font-size: 14px; }          /* not animated: an animation would make the screen re-compose constantly and slow the very redraw being waited for */
+
+/* ---- Print options: PDF at a paper size ---- */
+#pdPdfOpts { margin: 2px 0 6px 30px; }
+#pdPdfOpts .field-lbl { margin-top: 6px; }
+#pdPdfOpts select { width: 100%; }
+#pdPdfOpts .pd-chk { padding-left: 0; }
